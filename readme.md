@@ -20,3 +20,8 @@ class BaseDataset(Dataset):
 提供了 process_one_image() 这个核心预处理方法，统一处理图像缩放、裁剪、相机参数更新、3D点云生成
 
 子类只需要实现 get_data() 方法（负责读取原始文件），然后调用父类的 process_one_image() 处理每一帧
+
+帧在self.all_frames中的顺序是：先按轨迹排序，再在每个轨迹内按文件名排序
+训练模式下，每次随机选择一个帧
+测试模式下，按顺序选择帧，如果索引超出范围则循环
+DataLoader的shuffle参数会影响批次的顺序

@@ -116,7 +116,7 @@ class BaseDataset(Dataset):
         self,
         image,
         depth_map,
-        extri_opencv,
+        # extri_opencv,
         intri_opencv,
         original_size,
         target_image_shape,
@@ -155,7 +155,7 @@ class BaseDataset(Dataset):
         # Make copies to avoid in-place operations affecting original data
         image = np.copy(image)
         depth_map = np.copy(depth_map)
-        extri_opencv = np.copy(extri_opencv)
+        # extri_opencv = np.copy(extri_opencv)
         intri_opencv = np.copy(intri_opencv)
         if track is not None:
             track = np.copy(track)
@@ -219,19 +219,19 @@ class BaseDataset(Dataset):
             )
 
         # Convert depth to world and camera coordinates
-        world_coords_points, cam_coords_points, point_mask = (
-            depth_to_world_coords_points(depth_map, extri_opencv, intri_opencv)
-        )
+        # world_coords_points, cam_coords_points, point_mask = (
+        #     depth_to_world_coords_points(depth_map, extri_opencv, intri_opencv)
+        # )
 
         return (
             image,
             depth_map,
-            extri_opencv,
+            # extri_opencv,
             intri_opencv,
-            world_coords_points,
-            cam_coords_points,
-            point_mask,
-            track,
+            # world_coords_points,
+            # cam_coords_points,
+            # point_mask,
+            # track,
         )
 
     def get_nearby_ids(self, ids, full_seq_num, expand_ratio=None, expand_range=None):

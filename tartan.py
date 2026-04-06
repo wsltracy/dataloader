@@ -21,18 +21,19 @@ class TartanAirV1Dataset(BaseDataset):
     TartanAir V1 数据集加载器
     继承 BaseDataset，复用图像处理流程
     支持单目（默认左目）和双目输出
+    自动根据图像缩放调整内参
     """
     def __init__(
         self,
         common_conf,           # 配置对象（包含 img_size, patch_size, aug_scale 等）
         split: str = "train",  # 'train' 或 'test'
-        root_dir: str = "/mnt/tartanair_data",
+        root_dir: str = "/media/wsl/SANDISK ELE/dataset/tartanair",
         env: str = "carwelding",
         difficulty: str = "Easy",
-        traj_id: str = "P001",
+        traj_id: str = None,   # None 表示加载所有轨迹
         stereo: bool = False,   # 是否输出双目，默认单目（左目）
-        len_train: int = 100000,
-        len_test: int = 10000,
+        len_train: int = 10000,
+        len_test: int = 1000,
         depth_max: float = 80.0,
     ):
         # 调用父类初始化，继承配置
@@ -44,19 +45,15 @@ class TartanAirV1Dataset(BaseDataset):
         self.traj_id = traj_id
         self.stereo = stereo
         self.depth_max = depth_max
-        self.training = split == "train"
-        # 构建轨迹路径
-        self.traj_path = osp.join(root_dir, env, difficulty, traj_id)
-        if not osp.isdir(self.traj_path):
-            raise FileNotFoundError(f"轨迹路径不存在: {self.traj_path}")
+        self.training = (split == "train")
         
-        # 构建帧索引（带缓存）
-        self._build_index()
+        # 构建所有帧索引（支持多轨迹）
+        self._build_all_frames()
         
-        # 加载相机内参
-        self.K = self._load_intrinsics()
+        # 原始内参（640x480 分辨率下的默认值）
+        self.original_K = self._get_original_intrinsics()
         
-        # 设置数据集长度（采样次数）
+        # 设置数据集长度
         if split == "train":
             self.dataset_len = len_train
         elif split == "test":
@@ -64,78 +61,136 @@ class TartanAirV1Dataset(BaseDataset):
         else:
             raise ValueError(f"Invalid split: {split}")
         
-        status = "Training" if split == "train" else "Testing"
-        logging.info(f"{status}: TartanAir V1 {env}/{difficulty}/{traj_id}")
-        logging.info(f"{status}: Total frames: {self.num_samples}")
+        status = "Training" if self.training else "Testing"
+        logging.info(f"{status}: TartanAir V1 {env}/{difficulty}")
+        if traj_id:
+            logging.info(f"{status}: Trajectory: {traj_id}")
+        else:
+            logging.info(f"{status}: Trajectories: {list(set([f['traj'] for f in self.all_frames]))}")
+        logging.info(f"{status}: Total frames: {len(self.all_frames)}")
         logging.info(f"{status}: Dataset length: {len(self)}")
     
-    def _build_index(self):
-        """扫描文件系统，构建帧索引"""
-        # 获取左目图像列表
-        self.left_paths = sorted(glob.glob(osp.join(self.traj_path, "image_left", "*.png")))
-        if len(self.left_paths) == 0:
-            raise ValueError(f"未找到左目图像: {self.traj_path}/image_left/*.png")
-        
-        # 提取帧索引
-        self.frame_indices = []
-        for path in self.left_paths:
-            basename = osp.basename(path)
-            match = re.search(r'(\d+)', basename)
-            if match:
-                self.frame_indices.append(int(match.group(1)))
-            else:
-                self.frame_indices.append(len(self.frame_indices))
-        
-        self.num_samples = len(self.left_paths)
-        
-        # 如果是双目模式，构建右目路径
-        if self.stereo:
-            self.right_paths = []
-            for left_path in self.left_paths:
-                right_path = left_path.replace("image_left", "image_right")
-                right_path = right_path.replace("_left.png", "_right.png")
-                if not osp.exists(right_path):
-                    right_path = osp.join(self.traj_path, "image_right", osp.basename(left_path))
-                if not osp.exists(right_path):
-                    raise FileNotFoundError(f"右目图像不存在: {right_path}")
-                self.right_paths.append(right_path)
-    
-    def _load_intrinsics(self):
-        """加载相机内参"""
-        # 尝试从 sensors.json 读取
-        sensor_file = osp.join(self.root_dir, self.env, "sensors.json")
-        if osp.isfile(sensor_file):
-            try:
-                with open(sensor_file, 'r') as f:
-                    sensors = json.load(f)
-                # 查找左目相机
-                cam_name = None
-                for key in sensors.keys():
-                    if 'left' in key.lower() or 'cam0' in key.lower():
-                        cam_name = key
-                        break
-                if cam_name is None:
-                    cam_name = list(sensors.keys())[0]
-                cam_data = sensors[cam_name]
-                fx = cam_data.get('focal_length_x', 320.0)
-                fy = cam_data.get('focal_length_y', 320.0)
-                cx = cam_data.get('principal_point_x', 320.0)
-                cy = cam_data.get('principal_point_y', 240.0)
-                K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-            except Exception as e:
-                logging.warning(f"读取 sensors.json 失败: {e}")
-                K = self._default_intrinsics()
-        else:
-            K = self._default_intrinsics()
-        
-        return K
-    
-    def _default_intrinsics(self):
-        """默认内参（640x480 分辨率）"""
+    def _get_original_intrinsics(self):
+        """返回 TartanAir V1 原始内参（640x480 分辨率）"""
         return np.array([[320.0, 0.0, 320.0],
                          [0.0, 320.0, 240.0],
                          [0.0, 0.0, 1.0]], dtype=np.float32)
     
+    def _adjust_intrinsics_for_resize(self, original_size, target_size):
+        """
+        根据图像缩放调整内参矩阵
+        
+        Args:
+            original_size: (H, W) 原始图像尺寸
+            target_size: (H, W) 目标图像尺寸（经过 process_one_image 处理后）
+        
+        Returns:
+            调整后的内参矩阵 (3x3)
+        """
+        orig_h, orig_w = original_size
+        target_h, target_w = target_size
+        
+        scale_x = target_w / orig_w
+        scale_y = target_h / orig_h
+        
+        K = self.original_K.copy()
+        K[0, 0] *= scale_x  # fx
+        K[1, 1] *= scale_y  # fy
+        K[0, 2] *= scale_x  # cx
+        K[1, 2] *= scale_y  # cy
+        
+        return K
+    
+    def _build_all_frames(self):
+        """构建所有帧的索引列表"""
+        base_path = osp.join(self.root_dir, self.env, self.difficulty)
+        
+        if not osp.isdir(base_path):
+            raise FileNotFoundError(f"路径不存在: {base_path}")
+        
+        # 确定要加载的轨迹
+        if self.traj_id:
+            # 确保 traj_id 是字符串列表
+            if isinstance(self.traj_id, list):
+                traj_dirs = [str(t) for t in self.traj_id]
+            else:
+                traj_dirs = [str(self.traj_id)]
+        else:
+            traj_dirs = [d for d in os.listdir(base_path) 
+                        if d.startswith('P') and osp.isdir(osp.join(base_path, d))]
+            traj_dirs = sorted(traj_dirs)
+        
+        if not traj_dirs:
+            raise ValueError(f"未找到任何轨迹: {base_path}")
+        
+        logging.info(f"找到轨迹: {traj_dirs}")
+        
+        self.all_frames = []
+        
+        for traj in traj_dirs:
+            traj_path = osp.join(base_path, traj)
+            
+            # 确保 traj_path 存在
+            if not osp.isdir(traj_path):
+                logging.warning(f"轨迹路径不存在: {traj_path}")
+                continue
+            
+            # 图像路径
+            img_dir = osp.join(traj_path, "image_left")
+            if not osp.isdir(img_dir):
+                logging.warning(f"跳过 {traj}: 没有 image_left 目录")
+                continue
+            
+            # 获取所有图像
+            img_paths = sorted(glob.glob(osp.join(img_dir, "*.png")))
+            
+            if not img_paths:
+                logging.warning(f"跳过 {traj}: 没有找到图像")
+                continue
+            
+            logging.info(f"轨迹 {traj}: 找到 {len(img_paths)} 张图像")
+            
+            for img_path in img_paths:
+                # 提取帧索引
+                basename = osp.basename(img_path)
+                match = re.search(r'(\d+)', basename)
+                frame_idx = int(match.group(1)) if match else len(self.all_frames)
+                
+                # 构建深度图路径
+                depth_path = osp.join(traj_path, "depth_left", f"{frame_idx:06d}_left_depth.npy")
+                if not osp.exists(depth_path):
+                    depth_path = osp.join(traj_path, "depth_left", f"{frame_idx:06d}.npy")
+                if not osp.exists(depth_path):
+                    continue  # 跳过没有深度图的帧
+                
+                frame_info = {
+                    'image_path': img_path,
+                    'depth_path': depth_path,
+                    'traj': traj,
+                    'frame_idx': frame_idx
+                }
+                
+                # 如果是双目模式，同时检查右目数据
+                if self.stereo:
+                    right_path = img_path.replace("image_left", "image_right")
+                    right_path = right_path.replace("_left.png", "_right.png")
+                    right_depth_path = depth_path.replace("depth_left", "depth_right")
+                    right_depth_path = right_depth_path.replace("_left_depth.npy", "_right_depth.npy")
+                    right_depth_path = right_depth_path.replace("_left.npy", "_right.npy")
+                    
+                    if osp.exists(right_path) and osp.exists(right_depth_path):
+                        frame_info['right_image_path'] = right_path
+                        frame_info['right_depth_path'] = right_depth_path
+                    else:
+                        # 如果没有右目数据，跳过该帧
+                        continue
+                
+                self.all_frames.append(frame_info)
+        
+        if not self.all_frames:
+            raise ValueError(f"没有找到任何有效帧: {base_path}")
+        
+        logging.info(f"总共找到 {len(self.all_frames)} 个有效帧")
     def _load_image(self, path):
         """加载 RGB 图像"""
         img = cv2.imread(path)
@@ -144,23 +199,11 @@ class TartanAirV1Dataset(BaseDataset):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         return img
     
-    def _load_depth(self, idx, side='left'):
+    def _load_depth(self, path):
         """加载深度图"""
-        if side == 'left':
-            depth_dir = "depth_left"
-            prefix = f"{idx:06d}_left_depth.npy"
-        else:
-            depth_dir = "depth_right"
-            prefix = f"{idx:06d}_right_depth.npy"
-        
-        depth_path = osp.join(self.traj_path, depth_dir, prefix)
-        if not osp.isfile(depth_path):
-            # 尝试另一种命名
-            depth_path = osp.join(self.traj_path, depth_dir, f"{idx:06d}.npy")
-        if not osp.isfile(depth_path):
-            raise FileNotFoundError(f"深度文件不存在: {depth_path}")
-        
-        depth = np.load(depth_path).astype(np.float32)
+        if not osp.isfile(path):
+            raise FileNotFoundError(f"深度文件不存在: {path}")
+        depth = np.load(path)
         depth = np.clip(depth, 0, self.depth_max)
         return depth
     
@@ -170,113 +213,71 @@ class TartanAirV1Dataset(BaseDataset):
     def __getitem__(self, idx):
         """
         被 DataLoader 调用
-        返回 (seq_index, img_per_seq, aspect_ratio) 给 get_data
+        返回单帧数据
         """
-        # 随机选择序列（这里固定一个轨迹，所以 seq_index 始终为 0）
-        seq_index = 0  # 固定序列索引为0，表示只使用一个固定的轨迹
-        img_per_seq = 1  # 每次取一帧，即每次只处理一张图像
-        aspect_ratio = 1.0  # 设置图像的宽高比为1.0，表示正方形图像
-        return self.get_data(
-            seq_index=seq_index,  # 传入固定的序列索引
-            img_per_seq=img_per_seq,  # 传入每次处理的图像数量
-            aspect_ratio=aspect_ratio  # 传入图像的宽高比
-        )
-    
-    def get_data(self, seq_index=None, img_per_seq=None, aspect_ratio=1.0):
-        """
-        核心方法：加载数据
-        类似 VKittiDataset 的 get_data
-        """
-        # 随机选择一帧（训练时随机，测试时可顺序）
         if self.training:
-            frame_pos = random.randint(0, self.num_samples - 1)
+            frame = random.choice(self.all_frames)
         else:
-            # 测试模式：使用 seq_index 作为帧位置（简化处理）
-            frame_pos = seq_index if seq_index is not None else 0
-            frame_pos = frame_pos % self.num_samples
+            frame = self.all_frames[idx % len(self.all_frames)]
         
-        frame_idx = self.frame_indices[frame_pos]
-        
-        # 计算目标尺寸
-        target_shape = self.get_target_shape(aspect_ratio)
+        # 计算目标尺寸（使用父类方法，基于 img_size 和 patch_size）
+        target_image_shape = self.get_target_shape(aspect_ratio=1.0)
         
         # ===== 加载左目数据 =====
-        left_img = self._load_image(self.left_paths[frame_pos])
-        depth_left = self._load_depth(frame_idx, side='left')
+        left_img = self._load_image(frame['image_path'])
+        depth_left = self._load_depth(frame['depth_path'])
         original_size = np.array(left_img.shape[:2])
         
-        # 左目相机参数（内参 + 外参）
-        intri_left = self.K.copy()
-        # TartanAir V1 的位姿文件是 pose_left.txt，这里简化处理，使用单位外参
-        # 如果需要真实外参，可以从 pose_left.txt 读取
-        extri_left = np.eye(4)[:3]  # 单位外参，表示相机在世界坐标系原点
+        # 原始内参
+        intri_left = self.original_K.copy()
         
         # 调用父类的 process_one_image 处理左目
-        (
-            left_img_processed,
-            depth_left_processed,
-            extri_left_processed,
-            intri_left_processed,
-            world_points_left,
-            cam_points_left,
-            point_mask_left,
-            _,
-        ) = self.process_one_image(
-            left_img,
-            depth_left,
-            extri_left,
-            intri_left,
-            original_size,
-            target_shape,
-            filepath=self.left_paths[frame_pos],
-        )
+        # 注意：需要修改 process_one_image 的返回值，只取需要的部分
+        # (
+        #     left_img_processed,
+        #     depth_left_processed,
+        #     intri_left_processed,
+        # ) = self.process_one_image(
+        #     left_img,
+        #     depth_left,
+        #     intri_opencv=intri_left,
+        #     original_size=original_size,
+        #     target_image_shape=target_image_shape
+        # )
         
         # 构建返回结果
         batch = {
-            'seq_name': f"{self.env}_{self.difficulty}_{self.traj_id}",
-            'frame_idx': frame_idx,
-            'image': left_img_processed,
-            'depth': depth_left_processed,
-            'K': intri_left_processed,
-            'extrinsics': extri_left_processed,
-            # 'world_points': world_points_left,
-            # 'cam_points': cam_points_left,
-            # 'point_mask': point_mask_left,
+            'seq_name': f"{self.env}_{self.difficulty}_{frame['traj']}",
+            'frame_idx': frame['frame_idx'],
+            'image': left_img,
+            'depth': depth_left,
+            'K': intri_left,
             'original_size': original_size,
         }
         
         # ===== 如果是双目模式，加载右目数据 =====
-        if self.stereo:
-            right_img = self._load_image(self.right_paths[frame_pos])
-            depth_right = self._load_depth(frame_idx, side='right')
+        if self.stereo and 'right_image_path' in frame:
+            right_img = self._load_image(frame['right_image_path'])
+            depth_right = self._load_depth(frame['right_depth_path'])
             original_size_right = np.array(right_img.shape[:2])
             
-            # 右目相机参数（假设与左目相同，实际可能有基线偏移）
-            intri_right = self.K.copy()
-            extri_right = np.eye(4)[:3]  # 简化，实际应包含左右目基线
+            intri_right = self.original_K.copy()
             
-            (
-                right_img_processed,
-                depth_right_processed,
-                extri_right_processed,
-                intri_right_processed,
-                world_points_right,
-                cam_points_right,
-                point_mask_right,
-                _,
-            ) = self.process_one_image(
-                right_img,
-                depth_right,
-                extri_right,
-                intri_right,
-                original_size_right,
-                target_shape,
-                filepath=self.right_paths[frame_pos],
-            )
+            # (
+            #     right_img_processed,
+            #     depth_right_processed,
+            #     intri_right_processed,
+            # ) = self.process_one_image(
+            #     right_img,
+            #     depth_right,
+            #     intri_opencv=intri_right,
+            #     original_size=original_size_right,
+            #     target_image_shape=target_image_shape
+            # )
             
-            batch['right_image'] = right_img_processed
-            batch['right_depth'] = depth_right_processed
-            batch['right_intrinsics'] = intri_right_processed
-            batch['right_extrinsics'] = extri_right_processed
+            batch['right_image'] = right_img
+            batch['right_depth'] = depth_right
+            batch['right_K'] = intri_right
         
         return batch
+    
