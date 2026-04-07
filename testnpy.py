@@ -1,10 +1,64 @@
 import numpy as np
-
+import os
+from PIL import Image
+def read_pfm(filename):
+    """读取 PFM 格式的深度图文件"""
+    with open(filename, 'rb') as f:
+        header = f.readline().rstrip()
+        if header == b'PF':
+            color = True
+        elif header == b'Pf':
+            color = False
+        else:
+            raise Exception('Not a PFM file')
+        
+        while True:
+            dims_line = f.readline().rstrip()
+            if dims_line and dims_line[0:1] != b'#':
+                break
+        
+        dims = dims_line.split()
+        width = int(dims[0])
+        height = int(dims[1])
+        scale = float(f.readline().rstrip())
+        
+        if scale < 0:
+            endian = '<'
+            scale = -scale
+        else:
+            endian = '>'
+        
+        data = np.fromfile(f, dtype=endian + 'f')
+        data = data.reshape((height, width))
+        
+        if color:
+            data = data.reshape((height, width, 3))
+        # 垂直翻转深度图，因为PFM格式是bottom-up存储的
+        data = np.flipud(data)
+        return data, scale
+def read_matterport_depth(filename):
+    """读取 Matterport 格式的深度图文件（PNG格式，单位mm，需要转换为m）"""
+    # 使用PIL读取PNG图像
+    depth_img = Image.open(filename)
+    
+    # 转换为numpy数组
+    depth = np.array(depth_img, dtype=np.float32)
+    # Matterport深度图是16位PNG，需要除以4000转换为米
+    depth = depth / 4000.0
+    return depth
 # 在这里修改为你要测试的npy文件路径
 npy_path = "/media/wsl/SANDISK ELE/dataset/tartanair/carwelding/Hard/P001/depth_left/000057_left_depth.npy"
+# 在这里修改为你要测试的pfm文件路径
+pfm_path = "/media/weishanling/SANDISK ELE/dataset/BlendedMVS/58f7f7299f5b5647873cb110/rendered_depth_maps/00000013.pfm"
+matterport_path = "/media/weishanling/SANDISK ELE/dataset/matterport/data/v1/scans/5q7pvUzZiYa/matterport_depth_images/0e84cf4dec784bc28b78a80bee35c550_d0_0.png"
 
+# 加载pfm文件
+# data,_ = read_pfm(pfm_path)
 # 加载npy文件
-data = np.load(npy_path)
+# data = np.load(npy_path)
+# 加载Matterport深度图
+data = read_matterport_depth(matterport_path)
+
 
 # 打印基本信息
 print("=== 基本信息 ===")

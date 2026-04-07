@@ -12,11 +12,15 @@ import cv2
 import numpy as np
 import torch
 
-from base_dataset import BaseDataset
-from dataset_util import *
+from torch.utils.data import Dataset
+# from dataset_util import *
+# 设置所有随机种子
+random.seed(42)          # Python random 模块
+np.random.seed(42)       # NumPy 随机数生成器
+torch.manual_seed(42)    # PyTorch CPU 随机数生成器
+torch.cuda.manual_seed_all(42)  # PyTorch GPU 随机数生成器（如果使用GPU）
 
-
-class TartanAirV1Dataset(BaseDataset):
+class TartanAirV1Dataset(Dataset):
     """
     TartanAir V1 数据集加载器
     继承 BaseDataset，复用图像处理流程
@@ -25,7 +29,7 @@ class TartanAirV1Dataset(BaseDataset):
     """
     def __init__(
         self,
-        common_conf,           # 配置对象（包含 img_size, patch_size, aug_scale 等）
+        # common_conf,           # 配置对象（包含 img_size, patch_size, aug_scale 等）
         split: str = "train",  # 'train' 或 'test'
         root_dir: str = "/media/wsl/SANDISK ELE/dataset/tartanair",
         env: str = "carwelding",
@@ -37,7 +41,7 @@ class TartanAirV1Dataset(BaseDataset):
         depth_max: float = 80.0,
     ):
         # 调用父类初始化，继承配置
-        super().__init__(common_conf=common_conf)
+        super().__init__()
         
         self.root_dir = root_dir
         self.env = env
@@ -221,7 +225,7 @@ class TartanAirV1Dataset(BaseDataset):
             frame = self.all_frames[idx % len(self.all_frames)]
         
         # 计算目标尺寸（使用父类方法，基于 img_size 和 patch_size）
-        target_image_shape = self.get_target_shape(aspect_ratio=1.0)
+        # target_image_shape = self.get_target_shape(aspect_ratio=1.0)
         
         # ===== 加载左目数据 =====
         left_img = self._load_image(frame['image_path'])
@@ -252,7 +256,6 @@ class TartanAirV1Dataset(BaseDataset):
             'image': left_img,
             'depth': depth_left,
             'K': intri_left,
-            'original_size': original_size,
         }
         
         # ===== 如果是双目模式，加载右目数据 =====
