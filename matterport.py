@@ -97,9 +97,9 @@ class Matterport3DDataset(Dataset):
         self.all_frames = []
         for scene_id in self.scene_ids:
             scene_path = osp.join(self.root_dir, scene_id)
-            img_dir = osp.join(scene_path, "matterport_color_images")
-            depth_dir = osp.join(scene_path, "matterport_depth_images")
-            cam_dir = osp.join(scene_path, "matterport_camera_intrinsics")
+            img_dir = osp.join(scene_path, "undistorted_color_images")
+            depth_dir = osp.join(scene_path, "undistorted_depth_images")
+            cam_dir = osp.join(scene_path, "undistorted_camera_parameters")
 
             if not (osp.isdir(img_dir) and osp.isdir(depth_dir) and osp.isdir(cam_dir)):
                 logging.warning(f"跳过 {scene_id}: 缺少必要目录")
@@ -185,13 +185,17 @@ class Matterport3DDataset(Dataset):
 
         image = self._load_image(frame['image_path'])
         depth = self._load_depth(frame['depth_path'])
+        
         K = self._load_intrinsics(frame['cam_path'])
 
         # 转为 torch tensor (保持 HWC 和 HW)
-        image_tensor = torch.from_numpy(image).float() / 255.0
-        depth_tensor = torch.from_numpy(depth).float()
+        image_tensor = torch.from_numpy(image).float().permute(2, 0, 1) / 255.0
+        depth_tensor = torch.from_numpy(depth).float().unsqueeze(0)
+        
         K_tensor = torch.from_numpy(K).float()
 
+        sparse= depth
+        sparse_tensor= torch.from_numpy(sparse).float()
         return {
             'seq_name': f"{frame['scene_id']}_{frame['frame_id']}",
             'scene_id': frame['scene_id'],
@@ -199,4 +203,5 @@ class Matterport3DDataset(Dataset):
             'image': image_tensor,
             'depth': depth_tensor,
             'K': K_tensor,
+            'sparse': sparse_tensor
         }

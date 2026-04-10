@@ -235,7 +235,27 @@ class BlendedMVSDataset(Dataset):
             raise ValueError(f"不支持的深度图格式: {path}")
         
         depth = depth.astype(np.float32)
-        depth = np.clip(depth, 0, self.depth_max)
+        # depth = np.clip(depth, 0, self.depth_max)
+        depth[depth > self.depth_max] = 0
+
+        # 中值滤波
+        # 创建一个掩码，只提取大于 0 的有效深度值
+        # valid_depths = depth[depth > 0]
+
+        # # 检查是否有有效值，避免除以0或空数组错误
+        # if valid_depths.size > 0:
+        #     # 只基于有效深度计算全局中值
+        #     global_median = np.median(valid_depths)
+            
+        #     # 计算范围
+        #     lower_bound = global_median / 3.0
+        #     upper_bound = global_median * 3.0
+
+        #     # 过滤：将小于下限、大于上限，或者原本就是0的值，全部设为0
+        #     # 这里加上 (depth <= 0) 是为了确保原本的无效值保持为0
+        #     depth[(depth <= 0) | (depth < lower_bound) | (depth > upper_bound)] = 0
+
+
         return depth
     
     def _load_intrinsics(self, path):
@@ -266,11 +286,11 @@ class BlendedMVSDataset(Dataset):
         K = self._load_intrinsics(frame['cam_path'])
         
         # 转换为 torch tensor
-        # 图像: (H, W, C) 
-        image_tensor = torch.from_numpy(image).float()/ 255.0
+        # 图像: (H, W, C) -> (C, H, W)
+        image_tensor = torch.from_numpy(image).float().permute(2, 0, 1)/ 255.0
         
         # 深度: (H, W) 
-        depth_tensor = torch.from_numpy(depth).float()
+        depth_tensor = torch.from_numpy(depth).float().unsqueeze(0)
         
         # 内参: (3, 3)
         K_tensor = torch.from_numpy(K).float()

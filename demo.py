@@ -29,30 +29,28 @@ stereo=False
 # )
 
 # dataset = Matterport3DDataset(
-#     root_dir="/media/weishanling/SANDISK ELE/dataset/matterport/data/v1/scans",
+#     root_dir="/media/wsl/SANDISK ELE/dataset/matterport/data/v1/scans",
 #     split="train",
 #     depth_max=20.0,
 # )
-dataset = DDADDataset(
-    root_dir="/media/weishanling/SANDISK ELE/dataset/DDAD/ddad_train_val",
-    ddad_json_path="/media/weishanling/SANDISK ELE/dataset/DDAD/ddad.json",
-    split="0",
-    cam_names=['CAMERA_01', 'CAMERA_05', 'CAMERA_06', 'CAMERA_07', 'CAMERA_08', 'CAMERA_09'],
-    generate_depth=True,
-    depth_max=250.0,
-    len_train=100000,
-)
+# dataset = DDADDataset(
+#     root_dir="/media/weishanling/SANDISK ELE/dataset/DDAD/ddad_train_val",
+#     ddad_json_path="/media/weishanling/SANDISK ELE/dataset/DDAD/ddad.json",
+#     split="0",
+#     cam_names=['CAMERA_01', 'CAMERA_05', 'CAMERA_06', 'CAMERA_07', 'CAMERA_08', 'CAMERA_09'],
+#     generate_depth=True,
+#     depth_max=250.0,
+#     len_train=100000,
+# )
 
 # 创建数据集（单目模式）
-# dataset = TartanAirV1Dataset(
-#     split='train',
-#     root_dir='/media/weishanling/SANDISK ELE/dataset/tartanair',
-#     env='carwelding',
-#     difficulty='Hard',
-#     traj_id=None,
-#     stereo=stereo,  # 单目，只输出左目
-#     depth_max=80.0,
-# )
+dataset = TartanAirV1Dataset(
+    split='train',
+    root_dir='/media/weishanling/SANDISK ELE/dataset/tartanair',
+    env='carwelding',
+    difficulty='Hard',
+    traj_id=None,
+)
 
 print(f"Dataset size: {len(dataset)}")
 
@@ -64,8 +62,8 @@ for batch_idx, batch in enumerate(dataloader):
     # 打印 batch 中所有的键名
     # print("Batch keys:", batch.keys())
 
-    print("Image shape:", batch['image_1'].shape)
-    print("Depth shape:", batch['depth_1'].shape)
+    # print("Image shape:", batch['image'].shape)
+    # print("Depth shape:", batch['depth'].shape)
     
     # 检查是否为双目模式
     is_stereo = stereo  # 双目模式下图像通道数为6 (3+3)
@@ -133,7 +131,8 @@ for batch_idx, batch in enumerate(dataloader):
         # depth = batch['depth'][0].numpy()  # 取第一个样本的深度图
         # K=batch['K'][0].numpy()  # 取第一个样本的相机内参矩阵
         img = batch['image_1'][0].numpy()  # (C,H,W)->(H,W,C)格式
-        depth = batch['sparse_1'][0].numpy()  # 取第一个样本的深度图
+        # depth = batch['sparse_1'][0].numpy()  # 取第一个样本的深度图
+        depth = batch['depth_1'][0].numpy()  # 取第一个样本的深度图
         K=batch['K_1'][0].numpy()  # 取第一个样本的相机内参矩阵
         print("frame:", batch['seq_name'][0],batch['frame_idx'][0])
         print("Depth - min:", depth.min(), "max:", depth.max())
