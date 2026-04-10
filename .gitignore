@@ -1,0 +1,12 @@
+# 数据集相关 - 不要提交数据文件
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.npy
+*.npz
+*.pkl
+*.pickle
+
+runs/

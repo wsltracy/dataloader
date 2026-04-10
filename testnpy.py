@@ -50,14 +50,14 @@ def read_matterport_depth(filename):
 npy_path = "/media/wsl/SANDISK ELE/dataset/tartanair/carwelding/Hard/P001/depth_right/000004_right_depth.npy"
 # 在这里修改为你要测试的pfm文件路径
 pfm_path = "/media/weishanling/SANDISK ELE/dataset/BlendedMVS/58f7f7299f5b5647873cb110/rendered_depth_maps/00000013.pfm"
-matterport_path = "/media/weishanling/SANDISK ELE/dataset/matterport/data/v1/scans/5q7pvUzZiYa/matterport_depth_images/0e84cf4dec784bc28b78a80bee35c550_d0_0.png"
+matterport_path = "/media/wsl/SANDISK ELE/dataset/matterport/data/v1/scans/1LXtFkjw3qL/undistorted_depth_images/1LXtFkjw3qL/undistorted_depth_images/ddb93f6063d54365bc6e8c751fd2e698_d2_2.png"
 
 # 加载pfm文件
 # data,_ = read_pfm(pfm_path)
 # 加载npy文件
-data = np.load(npy_path)
+# data = np.load(npy_path)
 # 加载Matterport深度图
-# data = read_matterport_depth(matterport_path)
+data = read_matterport_depth(matterport_path)
 
 
 # 打印基本信息
