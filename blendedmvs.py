@@ -238,24 +238,6 @@ class BlendedMVSDataset(Dataset):
         # depth = np.clip(depth, 0, self.depth_max)
         depth[depth > self.depth_max] = 0
 
-        # 中值滤波
-        # 创建一个掩码，只提取大于 0 的有效深度值
-        # valid_depths = depth[depth > 0]
-
-        # # 检查是否有有效值，避免除以0或空数组错误
-        # if valid_depths.size > 0:
-        #     # 只基于有效深度计算全局中值
-        #     global_median = np.median(valid_depths)
-            
-        #     # 计算范围
-        #     lower_bound = global_median / 3.0
-        #     upper_bound = global_median * 3.0
-
-        #     # 过滤：将小于下限、大于上限，或者原本就是0的值，全部设为0
-        #     # 这里加上 (depth <= 0) 是为了确保原本的无效值保持为0
-        #     depth[(depth <= 0) | (depth < lower_bound) | (depth > upper_bound)] = 0
-
-
         return depth
     
     def _load_intrinsics(self, path):
@@ -303,5 +285,5 @@ class BlendedMVSDataset(Dataset):
             'depth': depth_tensor,
             'K': K_tensor,
         }
-        
+        print(f"Loaded frame: {batch['seq_name']}")
         return batch

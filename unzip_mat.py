@@ -13,9 +13,9 @@ ROOT_DIR = "/media/weishanling/SANDISK ELE/dataset/matterport/data/v1/scans"
 DELETE_ZIP_AFTER_EXTRACT = False   # 是否解压后删除原 zip 文件
 
 ZIP_NAMES = [
-    "matterport_color_images.zip",
-    "matterport_depth_images.zip",
-    "matterport_camera_intrinsics.zip"
+    "undistorted_color_images.zip",
+    "undistorted_depth_images.zip",
+    "undistorted_camera_intrinsics.zip"
 ]
 
 def extract_zip_clean(zip_path, extract_to):

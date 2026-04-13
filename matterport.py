@@ -38,32 +38,34 @@ def parse_camera_intrinsics_from_conf(conf_path, view_id):
     Returns:
         K: 3x3内参矩阵
     """
+    if not osp.exists(conf_path):
+        logging.warning(f"配置文件不存在: {conf_path}")
+        return None
+    
     with open(conf_path, 'r') as f:
         lines = f.readlines()
     
+    # 按顺序收集前三个内参矩阵
     intrinsics_list = []
     for line in lines:
         line = line.strip()
         if line.startswith('intrinsics_matrix'):
             parts = list(map(float, line.split()[1:]))
+            
             if len(parts) == 9:  # 3x3矩阵格式
                 K = np.array([[parts[0], parts[1], parts[2]],
                               [parts[3], parts[4], parts[5]],
                               [parts[6], parts[7], parts[8]]], dtype=np.float32)
-            else:
-                logging.warning(f"无法解析内参: {line}")
-                K = None
-            intrinsics_list.append(K)
+                
+                intrinsics_list.append(K)
+                
+                # 只需要前三个内参矩阵
+                if len(intrinsics_list) >= 3:
+                    break
     
-    if view_id < len(intrinsics_list) and intrinsics_list[view_id] is not None:
+    # 检查是否找到了足够的内参矩阵
+    if view_id < len(intrinsics_list):
         return intrinsics_list[view_id]
-    else:
-        # 返回默认内参
-        default_K = np.array([[1076.45, 0, 631.116],
-                              [0, 1077.19, 509.202],
-                              [0, 0, 1]], dtype=np.float32)
-        logging.warning(f"View {view_id} 内参未找到，使用默认值")
-        return default_K
 
 
 class Matterport3DDataset(Dataset):
@@ -168,7 +170,7 @@ class Matterport3DDataset(Dataset):
                 }
             
             # 查找.conf文件获取内参
-            conf_files = glob.glob(osp.join(scene_path, "*.conf"))
+            conf_files = glob.glob(osp.join(cam_base, "*.conf"))
             conf_path = conf_files[0] if conf_files else None
             
             # 为每个完整的三目组创建样本
@@ -204,12 +206,6 @@ class Matterport3DDataset(Dataset):
                     # 加载内参
                     if conf_path and osp.exists(conf_path):
                         K = parse_camera_intrinsics_from_conf(conf_path, view)
-                    else:
-                        # 使用默认内参
-                        default_K = np.array([[1076.45, 0, 631.116],
-                                              [0, 1077.19, 509.202],
-                                              [0, 0, 1]], dtype=np.float32)
-                        K = default_K
                     
                     tri_sample['views'][view] = {
                         'image_path': views_data[view]['image_path'],
@@ -277,7 +273,7 @@ class Matterport3DDataset(Dataset):
             images[view] = image_tensor
             depths[view] = depth_tensor
             Ks[view] = K_tensor
-        
+  
         # 输出格式：三个相机的数据
         return {
             'seq_name': f"{frame['scene_id']}_{frame['uuid']}_idx{frame['index']}",
@@ -303,7 +299,7 @@ class Matterport3DDataset(Dataset):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    root_dir = "/media/wsl/SANDISK E/dataset/matterport/data/v1/scans"
+    root_dir = "/media/wsl/SANDISK ELE/dataset/matterport/data/v1/scans"
     
     # 创建三目数据集
     try:
