@@ -11,7 +11,8 @@ import matplotlib.cm as cm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from blendedmvs import BlendedMVSDataset  # 请根据实际情况导入你的数据集
+# 导入简化版数据集
+from blendedmvs import BlendedMVSDataset
 from tartan import TartanAirV1Dataset
 from matterport import Matterport3DDataset
 from dgp.datasets import SynchronizedSceneDataset
@@ -21,10 +22,11 @@ np.random.seed(42)
 
 BATCH_SIZE = 1
 NUM_BATCHES_TO_LOG = 3
-LOG_DIR = "runs/mat"
+LOG_DIR = "runs/mat2"
 
-# DDAD
-# # 相机配置
+# ==================== 选择数据集 ====================
+
+# # 选项1: DDAD (六目，字典格式)
 # CAMERA_IDS = ['01', '05', '06', '07', '08', '09']
 # dataset = SynchronizedSceneDataset(
 #     '/media/wsl/SANDISK ELE/dataset/DDAD/ddad_train_val/ddad_2.json',
@@ -32,38 +34,41 @@ LOG_DIR = "runs/mat"
 #     generate_depth_from_datum='lidar',
 #     split='train'
 # )
-# k_recorded = False
 
-
+# # 选项2: BlendedMVS (单目，元组格式)
 # dataset = BlendedMVSDataset(
 #     root_dir="/media/wsl/SANDISK ELE/dataset/BlendedMVS",
 #     split="train",
 #     depth_max=200.0,
 #     len_train=10000,
 # )
+
+# 选项3: TartanAir (双目，元组格式)
 # dataset = TartanAirV1Dataset(
 #     split='train',
 #     root_dir='/media/wsl/SANDISK ELE/dataset/tartanair',
 #     env='carwelding',
 #     difficulty='Hard',
 #     traj_id=None,
+    
 # )
+
+# 选项4: Matterport3D (三目，元组格式)
 dataset = Matterport3DDataset(
     root_dir="/media/wsl/SANDISK ELE/dataset/matterport/data/v1/scans",
     split="train",
     depth_max=100.0,
+
 )
+
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-
-
 writer = SummaryWriter(log_dir=LOG_DIR)
 
-def pil_to_numpy(pil_image):
-    """将 PIL Image 转换为 numpy array (H, W, C) 值域 [0,1]"""
-    return np.array(pil_image).astype(np.float32) / 255.0
+# ==================== 辅助函数 ====================
+
 def tensor_to_numpy(tensor):
     """将 (C, H, W) tensor 转换为 (H, W, C) numpy，值域 [0,1]"""
-    if tensor.ndim == 3 and tensor.shape[0] in (1,3):
+    if tensor.ndim == 3 and tensor.shape[0] in (1, 3):
         arr = tensor.permute(1, 2, 0).cpu().numpy()
     else:
         arr = tensor.cpu().numpy()
@@ -77,309 +82,314 @@ def depth_to_colormap_numpy(depth_tensor, cmap='jet'):
         depth_np = depth_tensor.squeeze(0).cpu().numpy()
     else:
         depth_np = depth_tensor.cpu().numpy()
+    
     vmin, vmax = depth_np.min(), depth_np.max()
     if vmax - vmin < 1e-6:
         norm = np.zeros_like(depth_np)
     else:
         norm = (depth_np - vmin) / (vmax - vmin)
+    
     colormap = cm.get_cmap(cmap)
-    colored = colormap(norm)[:, :, :3]   # (H, W, 3)
+    colored = colormap(norm)[:, :, :3]
+    
+    # 将无效深度（0）设为白色
+    colored[depth_np == 0] = [1.0, 1.0, 1.0]
     return colored
+
 def pil_to_colormap(pil_image, cmap='jet'):
-    """将PIL Image格式的深度图转换为伪彩色 numpy array (H, W, 3) 值域 [0,1]
-    
-    Args:
-        pil_image: PIL.Image格式的深度图
-        cmap: 使用的颜色映射，默认为'jet'
-    
-    Returns:
-        colored: 伪彩色图像，numpy数组，形状为(H, W, 3)，值域[0,1]
-    """
-    # 将PIL Image转换为numpy数组
+    """将PIL Image格式的深度图转换为伪彩色"""
     depth_np = np.array(pil_image, dtype=np.float32)
-    
-    # 创建一个掩码，标识深度值为0的像素
     zero_mask = (depth_np == 0)
-    
-    # 根据当前深度图的最大最小值进行归一化
     vmin, vmax = depth_np.min(), depth_np.max()
     if vmax - vmin > 1e-6:
         norm = (depth_np - vmin) / (vmax - vmin)
     else:
         norm = np.zeros_like(depth_np)
-    
-    # 应用颜色映射
     colormap = cm.get_cmap(cmap)
-    colored = colormap(norm)[:, :, :3]   # (H, W, 3)
-    
-    # 将深度值为0的像素设置为白色
-    colored[zero_mask] = [1.0, 1.0, 1.0]  # 白色
-    
+    colored = colormap(norm)[:, :, :3]
+    colored[zero_mask] = [1.0, 1.0, 1.0]
     return colored
+
+def add_image_depth_lidar_to_tensorboard(writer, tag, image, lidar, depth, step,sample_idx):
+    """添加图像、LiDAR、深度图到 TensorBoard"""
+    
+    # # 1. RGB 图像
+    img_arr = tensor_to_numpy(image)
+    # fig_img, ax_img = plt.subplots(figsize=(6, 4))
+    # ax_img.imshow(img_arr)
+    # ax_img.set_title(f"RGB Image", fontsize=10)
+    # ax_img.axis('off')
+    # writer.add_figure(f'{tag}/RGB/sample_{sample_idx}', fig_img, global_step=step)
+    # plt.close(fig_img)
+    
+    # # 2. LiDAR 稀疏深度图
+    lidar_color = depth_to_colormap_numpy(lidar)
+    # fig_lidar, ax_lidar = plt.subplots(figsize=(6, 4))
+    # ax_lidar.imshow(lidar_color)
+    # ax_lidar.set_title(f"LiDAR Sparse Depth", fontsize=10)
+    # ax_lidar.axis('off')
+    # writer.add_figure(f'{tag}/LiDAR/sample_{sample_idx}', fig_lidar, global_step=step)
+    # plt.close(fig_lidar)
+    
+    # # 3. 密集深度图 (GT)
+    depth_color = depth_to_colormap_numpy(depth)
+    # fig_depth, ax_depth = plt.subplots(figsize=(6, 4))
+    # ax_depth.imshow(depth_color)
+    # ax_depth.set_title(f"Dense Depth (GT)", fontsize=10)
+    # ax_depth.axis('off')
+    # writer.add_figure(f'{tag}/Depth/sample_{sample_idx}', fig_depth, global_step=step)
+    # plt.close(fig_depth)
+    
+    # 4. 并排对比 (RGB + LiDAR + Depth)
+    fig_compare, axes = plt.subplots(1, 3, figsize=(18, 5))
+    axes[0].imshow(img_arr)
+    axes[0].set_title("RGB", fontsize=10)
+    axes[0].axis('off')
+    axes[1].imshow(lidar_color)
+    axes[1].set_title("LiDAR", fontsize=10)
+    axes[1].axis('off')
+    axes[2].imshow(depth_color)
+    axes[2].set_title("Dense Depth", fontsize=10)
+    axes[2].axis('off')
+    fig_compare.suptitle(f"Comparison - {tag}")
+    writer.add_figure(f'Comparison/sample_{sample_idx}', fig_compare, global_step=step)
+    plt.close(fig_compare)
+
+def get_k_text(K):
+    """从内参矩阵提取文本"""
+    return f"fx={K[0,0]:.2f}, fy={K[1,1]:.2f}, cx={K[0,2]:.2f}, cy={K[1,2]:.2f}"
+
+# ==================== 主循环 ====================
 print(f"Dataset size: {len(dataset)}")
 print(f"Logging to: {LOG_DIR}")
 print(f"Logging first {NUM_BATCHES_TO_LOG} batches...")
 
-# 单目
-# for batch_idx, batch in enumerate(dataloader):
-#     if batch_idx >= NUM_BATCHES_TO_LOG:
-#         break
+# 判断数据集类型
+is_ddad = isinstance(dataset, SynchronizedSceneDataset)
 
-#     images = batch['image']   # (B, C, H, W)
-#     depths = batch['depth']   # (B, 1, H, W)
-#     Ks     = batch['K']       # (B, 3, 3)
-#     seq_names = batch.get('seq_name', [f"sample_{i}" for i in range(BATCH_SIZE)])
-
-#     B = images.shape[0]
-#     for i in range(B):
-#         # ---- 图像 I：带标题的 figure ----
-#         img_arr = tensor_to_numpy(images[i])
-#         fig, ax = plt.subplots(figsize=(6, 4))
-#         ax.imshow(img_arr)
-#         ax.set_title(seq_names[i], fontsize=10)
-#         ax.axis('off')
-#         writer.add_figure(f'I/sample_{i}', fig, global_step=batch_idx)
-#         plt.close(fig)   # 释放内存
-
-#         # ---- 深度 D：伪彩色，也可以加标题（可选，这里不加） ----
-#         depth_color = depth_to_colormap_numpy(depths[i])
-#         fig_d, ax_d = plt.subplots(figsize=(6, 4))
-#         ax_d.imshow(depth_color)
-#         ax_d.set_title(f"Depth of {seq_names[i]}", fontsize=10)
-#         ax_d.axis('off')
-#         writer.add_figure(f'D/sample_{i}', fig_d, global_step=batch_idx)
-#         plt.close(fig_d)
-
-#         # ---- 内参 K：文本记录 ----
-#         K = Ks[i].cpu().numpy()
-#         k_text = f"fx={K[0,0]:.2f}, fy={K[1,1]:.2f}, cx={K[0,2]:.2f}, cy={K[1,2]:.2f}"
-#         print(f"Batch {batch_idx}, Sample {i} - K: {k_text}")
-#         writer.add_text(f'K/sample_{i}', k_text, global_step=batch_idx)
-
-#     print(f"Logged batch {batch_idx+1}/{NUM_BATCHES_TO_LOG}")
-
-# 双目
-# for batch_idx, batch in enumerate(dataloader):
-#     if batch_idx >= NUM_BATCHES_TO_LOG:
-#         break
-
-#     images_left = batch['image_1']   # (B, C, H, W)
-#     images_right = batch['image_2']  # (B, C, H, W)
-#     depths_left = batch['depth_1']   # (B, 1, H, W)
-#     depths_right = batch['depth_2']  # (B, 1, H, W)
-#     Ks_left = batch['K_1']           # (B, 3, 3)
-#     Ks_right = batch['K_2']          # (B, 3, 3)
-#     seq_names = batch.get('seq_name', [f"sample_{i}" for i in range(BATCH_SIZE)])
-
-#     B = images_left.shape[0]
-#     for i in range(B):
-#         # ---- 左右目图像并排显示 ----
-#         img_left_arr = tensor_to_numpy(images_left[i])
-#         img_right_arr = tensor_to_numpy(images_right[i])
-        
-#         # 创建并排图
-#         fig_stereo, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
-#         axes[0].imshow(img_left_arr)
-#         axes[0].set_title(f"Left: {seq_names[i]}", fontsize=10)
-#         axes[0].axis('off')
-        
-#         axes[1].imshow(img_right_arr)
-#         axes[1].set_title(f"Right: {seq_names[i]}", fontsize=10)
-#         axes[1].axis('off')
-        
-#         fig_stereo.suptitle(f"Stereo Images - Batch {batch_idx}, Sample {i}")
-#         writer.add_figure(f'Stereo_Images/sample_{i}', fig_stereo, global_step=batch_idx)
-#         plt.close(fig_stereo)
-        
-#         # ---- 左右目深度并排显示 ----
-#         depth_left_color = depth_to_colormap_numpy(depths_left[i])
-#         depth_right_color = depth_to_colormap_numpy(depths_right[i])
-        
-#         fig_depth, axes_d = plt.subplots(1, 2, figsize=(12, 5))
-        
-#         axes_d[0].imshow(depth_left_color)
-#         axes_d[0].set_title(f"Left Depth: {seq_names[i]}", fontsize=10)
-#         axes_d[0].axis('off')
-        
-#         axes_d[1].imshow(depth_right_color)
-#         axes_d[1].set_title(f"Right Depth: {seq_names[i]}", fontsize=10)
-#         axes_d[1].axis('off')
-        
-#         fig_depth.suptitle(f"Stereo Depths - Batch {batch_idx}, Sample {i}")
-#         writer.add_figure(f'Stereo_Depths/sample_{i}', fig_depth, global_step=batch_idx)
-#         plt.close(fig_depth)
-        
-#         # ---- 内参信息 ----
-#         K_left = Ks_left[i].cpu().numpy()
-#         K_right = Ks_right[i].cpu().numpy()
-#         k_text = f"Left: fx={K_left[0,0]:.2f}, fy={K_left[1,1]:.2f}, cx={K_left[0,2]:.2f}, cy={K_left[1,2]:.2f}\n"
-#         k_text += f"Right: fx={K_right[0,0]:.2f}, fy={K_right[1,1]:.2f}, cx={K_right[0,2]:.2f}, cy={K_right[1,2]:.2f}"
-#         writer.add_text(f'K_stereo/sample_{i}', k_text, global_step=batch_idx)
-
-#     print(f"Logged batch {batch_idx+1}/{NUM_BATCHES_TO_LOG}")
-
-# 三目
-for batch_idx, batch in enumerate(dataloader):
-    if batch_idx >= NUM_BATCHES_TO_LOG:
-        break
-
-    # 提取三目数据
-    images_1 = batch['image_1']   # (B, C, H, W) 相机1
-    images_2 = batch['image_2']   # (B, C, H, W) 相机2
-    images_3 = batch['image_3']   # (B, C, H, W) 相机3
+if is_ddad:
+    # ==================== DDAD (六目，字典格式) ====================
+    print("Processing DDAD dataset (6 cameras)")
+    CAMERA_IDS = ['01', '05', '06', '07', '08', '09']
+    # k_recorded = False
     
-    depths_1 = batch['depth_1']   # (B, 1, H, W)
-    depths_2 = batch['depth_2']   # (B, 1, H, W)
-    depths_3 = batch['depth_3']   # (B, 1, H, W)
+    # 为每个相机创建图像列表
+    rgb_images = {cam_id: [] for cam_id in CAMERA_IDS}
+    lidar_images = {cam_id: [] for cam_id in CAMERA_IDS}
+    depth_images = {cam_id: [] for cam_id in CAMERA_IDS}
     
-    Ks_1 = batch['K_1']           # (B, 3, 3)
-    Ks_2 = batch['K_2']           # (B, 3, 3)
-    Ks_3 = batch['K_3']           # (B, 3, 3)
-    
-    seq_names = batch.get('seq_name', [f"sample_{i}" for i in range(BATCH_SIZE)])
+    for batch_idx in range(NUM_BATCHES_TO_LOG):
+        print(f"Processing batch {batch_idx + 1}/{NUM_BATCHES_TO_LOG}")
+        sample = dataset[batch_idx]
+        cameras = {
+            '01': sample[0][0],
+            '05': sample[0][1],
+            '06': sample[0][2],
+            '07': sample[0][3],
+            '08': sample[0][4],
+            '09': sample[0][5],
+        }
+        
+        for cam_id in CAMERA_IDS:
+            cam_data = cameras[cam_id]
+            
+            # 图像
+            img_np = np.array(cam_data['rgb']).astype(np.float32) / 255.0
+            img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+            
+            # LiDAR (深度图)
+            depth_pil = cam_data['depth']
+            depth_np = np.array(depth_pil, dtype=np.float32)
+            depth_tensor = torch.from_numpy(depth_np).unsqueeze(0)
+            
+            # DDAD 没有单独的密集深度图，用 LiDAR 代替
+            lidar_tensor = depth_tensor
+            
+            # # 收集图像
+            # rgb_images[cam_id].append(img_tensor)
+            # lidar_images[cam_id].append(lidar_tensor)
+            # depth_images[cam_id].append(depth_tensor)
 
-    B = images_1.shape[0]
-    # ========== 分开显示每个相机 ==========
-    for i in range(B):
-        # ---- 相机1 (View0) ----
-        img_1_arr = tensor_to_numpy(images_1[i])
-        fig_cam1, ax1 = plt.subplots(figsize=(6, 4))
-        ax1.imshow(img_1_arr)
-        ax1.set_title(f"Camera1 (View0): {seq_names[i]}", fontsize=10)
-        ax1.axis('off')
-        writer.add_figure(f'Camera1_Images/sample_{i}', fig_cam1, global_step=batch_idx)
-        plt.close(fig_cam1)
+            # 创建三图并列显示
+            # tag: f'Camera_{cam_id}'，这样每个相机有独立的标签
+            # step: batch_idx 用于滑块切换批次
+            # sample_idx: batch_idx 作为样本索引
+            add_image_depth_lidar_to_tensorboard(
+                writer=writer,
+                tag=f'Camera_{cam_id}',
+                image=img_tensor,
+                lidar=lidar_tensor,
+                depth=depth_tensor,
+                step=batch_idx,      # 使用 batch_idx 实现滑块切换
+                sample_idx=0
+            )
+            # 记录内参（只在第一个batch记录）
+            if batch_idx == 0:
+                K = cam_data['intrinsics']
+                writer.add_text(f'Camera_{cam_id}/Intrinsics', 
+                              f"fx={K[0,0]:.2f}, fy={K[1,1]:.2f}, cx={K[0,2]:.2f}, cy={K[1,2]:.2f}", 
+                              global_step=0)
+    
+    # # 将收集的图像堆叠为批次
+    # for cam_id in CAMERA_IDS:
+    #     # 堆叠图像为 (N, C, H, W) 格式
+    #     rgb_batch = torch.stack(rgb_images[cam_id])
+    #     lidar_batch = torch.stack(lidar_images[cam_id])
+    #     depth_batch = torch.stack(depth_images[cam_id])
         
-        # 相机1深度
-        depth_1_color = depth_to_colormap_numpy(depths_1[i])
-        fig_d1, ax_d1 = plt.subplots(figsize=(6, 4))
-        ax_d1.imshow(depth_1_color)
-        ax_d1.set_title(f"Camera1 Depth: {seq_names[i]}", fontsize=10)
-        ax_d1.axis('off')
-        writer.add_figure(f'Camera1_Depths/sample_{i}', fig_d1, global_step=batch_idx)
-        plt.close(fig_d1)
-        
-        # ---- 相机2 (View1) ----
-        img_2_arr = tensor_to_numpy(images_2[i])
-        fig_cam2, ax2 = plt.subplots(figsize=(6, 4))
-        ax2.imshow(img_2_arr)
-        ax2.set_title(f"Camera2 (View1): {seq_names[i]}", fontsize=10)
-        ax2.axis('off')
-        writer.add_figure(f'Camera2_Images/sample_{i}', fig_cam2, global_step=batch_idx)
-        plt.close(fig_cam2)
-        
-        # 相机2深度
-        depth_2_color = depth_to_colormap_numpy(depths_2[i])
-        fig_d2, ax_d2 = plt.subplots(figsize=(6, 4))
-        ax_d2.imshow(depth_2_color)
-        ax_d2.set_title(f"Camera2 Depth: {seq_names[i]}", fontsize=10)
-        ax_d2.axis('off')
-        writer.add_figure(f'Camera2_Depths/sample_{i}', fig_d2, global_step=batch_idx)
-        plt.close(fig_d2)
-        
-        # ---- 相机3 (View2) ----
-        img_3_arr = tensor_to_numpy(images_3[i])
-        fig_cam3, ax3 = plt.subplots(figsize=(6, 4))
-        ax3.imshow(img_3_arr)
-        ax3.set_title(f"Camera3 (View2): {seq_names[i]}", fontsize=10)
-        ax3.axis('off')
-        writer.add_figure(f'Camera3_Images/sample_{i}', fig_cam3, global_step=batch_idx)
-        plt.close(fig_cam3)
-        
-        # 相机3深度
-        depth_3_color = depth_to_colormap_numpy(depths_3[i])
-        fig_d3, ax_d3 = plt.subplots(figsize=(6, 4))
-        ax_d3.imshow(depth_3_color)
-        ax_d3.set_title(f"Camera3 Depth: {seq_names[i]}", fontsize=10)
-        ax_d3.axis('off')
-        writer.add_figure(f'Camera3_Depths/sample_{i}', fig_d3, global_step=batch_idx)
-        plt.close(fig_d3)
-        
-        # 内参信息（每个相机单独）
-        K_1 = Ks_1[i].cpu().numpy()
-        K_2 = Ks_2[i].cpu().numpy()
-        K_3 = Ks_3[i].cpu().numpy()
-        
-        writer.add_text(f'Camera1_K/sample_{i}', 
-                        f"fx={K_1[0,0]:.2f}, fy={K_1[1,1]:.2f}, cx={K_1[0,2]:.2f}, cy={K_1[1,2]:.2f}", 
-                        global_step=batch_idx)
-        writer.add_text(f'Camera2_K/sample_{i}', 
-                        f"fx={K_2[0,0]:.2f}, fy={K_2[1,1]:.2f}, cx={K_2[0,2]:.2f}, cy={K_2[1,2]:.2f}", 
-                        global_step=batch_idx)
-        writer.add_text(f'Camera3_K/sample_{i}', 
-                        f"fx={K_3[0,0]:.2f}, fy={K_3[1,1]:.2f}, cx={K_3[0,2]:.2f}, cy={K_3[1,2]:.2f}", 
-                        global_step=batch_idx)
-    writer.close()
-    print(f"Logged batch {batch_idx+1}/{NUM_BATCHES_TO_LOG}")
+    #     # 添加到 TensorBoard，使用滑块切换
+    #     writer.add_images(f'Camera_{cam_id}/RGB', rgb_batch, global_step=0, dataformats='NCHW')
+    #     writer.add_images(f'Camera_{cam_id}/LiDAR', lidar_batch, global_step=0, dataformats='NCHW')
+    #     writer.add_images(f'Camera_{cam_id}/Depth', depth_batch, global_step=0, dataformats='NCHW')
+    
+    # # 记录内参（只记录一次）
+    # if not k_recorded:
+    #     for cam_id in CAMERA_IDS:
+    #         K = cameras[cam_id]['intrinsics']
+    #         writer.add_text(f'Camera_{cam_id}/K', get_k_text(K), global_step=0)
+    #     k_recorded = True
+    
+    print(f"Logged {NUM_BATCHES_TO_LOG} DDAD samples with slider")
 
-# # 6目
-# for sample_idx, sample in enumerate(dataset):
-#     if sample_idx >= NUM_BATCHES_TO_LOG:
-#         break
-    
-#     # 提取相机数据
-#     cameras = {
-#         '01': sample[0][0],
-#         '05': sample[0][1],
-#         '06': sample[0][2],
-#         '07': sample[0][3],
-#         '08': sample[0][4],
-#         '09': sample[0][5],
-#     }
-    
-#     # 准备6目图像
-#     images = []
-#     depths = []
-#     depth_ranges = {}  # 存储每个相机深度图的范围
+else:
+    # ==================== 元组格式处理 ====================
+    for batch_idx, batch in enumerate(dataloader):
+        if batch_idx >= NUM_BATCHES_TO_LOG:
+            break
+        
+        # 根据元组长度判断数据集类型
+        num_elements = len(batch)
+        
+        if num_elements == 5:
+            # ==================== 单目 (BlendedMVS) ====================
+            # 输出格式: (image, lidar, depth, K, seq_name)
+            print(f"Processing Monocular data (BlendedMVS) - Batch {batch_idx}")
+            
+            images = batch[0]      # (B, C, H, W)
+            lidars = batch[1]      # (B, 1, H, W)
+            depths = batch[2]      # (B, 1, H, W)
+            Ks = batch[3]          # (B, 3, 3)
+            seq_names = batch[4]   # tuple of strings
+ 
+            
+            B = images.shape[0]
+            for i in range(B):
+                seq_name = seq_names[i] if isinstance(seq_names, (list, tuple)) else seq_names
+                
+                add_image_depth_lidar_to_tensorboard(
+                    writer, f'Monocular/{seq_name}',
+                    images[i], lidars[i], depths[i],
+                    batch_idx, i
+                )
+                
+                # 记录内参
+                K = Ks[i].cpu().numpy()
+                writer.add_text(f'Monocular/{seq_name}/K', get_k_text(K), global_step=batch_idx)
+            
+            print(f"  Logged {B} samples")
+        
+        elif num_elements == 9:
+            # ==================== 双目 (TartanAir) ====================
+            # 输出格式: (image_1, lidar_1, depth_1, K_1, image_2, lidar_2, depth_2, K_2, seq_name)
+            print(f"Processing Stereo data (TartanAir) - Batch {batch_idx}")
+            
+            images_left = batch[0]   # (B, C, H, W)
+            lidars_left = batch[1]   # (B, 1, H, W)
+            depths_left = batch[2]   # (B, 1, H, W)
+            Ks_left = batch[3]       # (B, 3, 3)
+            images_right = batch[4]  # (B, C, H, W)
+            lidars_right = batch[5]  # (B, 1, H, W)
+            depths_right = batch[6]  # (B, 1, H, W)
+            Ks_right = batch[7]      # (B, 3, 3)
+            seq_names = batch[8]     # tuple of strings
+            
+            B = images_left.shape[0]
+            for i in range(B):
+                seq_name = seq_names[i] if isinstance(seq_names, (list, tuple)) else seq_names
+                
+                # 左目
+                add_image_depth_lidar_to_tensorboard(
+                    writer, f'Stereo/{seq_name}/Left',
+                    images_left[i], lidars_left[i], depths_left[i],
+                    batch_idx, i
+                )
+                
+                # 右目
+                add_image_depth_lidar_to_tensorboard(
+                    writer, f'Stereo/{seq_name}/Right',
+                    images_right[i], lidars_right[i], depths_right[i],
+                    batch_idx, i
+                )
+                
+                # 记录内参
+                K_left = Ks_left[i].cpu().numpy()
+                K_right = Ks_right[i].cpu().numpy()
+                writer.add_text(f'Stereo/{seq_name}/Left_K', get_k_text(K_left), global_step=batch_idx)
+                writer.add_text(f'Stereo/{seq_name}/Right_K', get_k_text(K_right), global_step=batch_idx)
+            
+            print(f"  Logged {B} stereo pairs")
+        
+        elif num_elements == 13:
+            # ==================== 三目 (Matterport3D) ====================
+            # 输出格式: (image_1, lidar_1, depth_1, K_1, image_2, lidar_2, depth_2, K_2,
+            #           image_3, lidar_3, depth_3, K_3, seq_name)
+            print(f"Processing Triclops data (Matterport3D) - Batch {batch_idx}")
+            
+            images_1 = batch[0]   # (B, C, H, W)
+            lidars_1 = batch[1]   # (B, 1, H, W)
+            depths_1 = batch[2]   # (B, 1, H, W)
+            Ks_1 = batch[3]       # (B, 3, 3)
+            images_2 = batch[4]   # (B, C, H, W)
+            lidars_2 = batch[5]   # (B, 1, H, W)
+            depths_2 = batch[6]   # (B, 1, H, W)
+            Ks_2 = batch[7]       # (B, 3, 3)
+            images_3 = batch[8]   # (B, C, H, W)
+            lidars_3 = batch[9]   # (B, 1, H, W)
+            depths_3 = batch[10]  # (B, 1, H, W)
+            Ks_3 = batch[11]      # (B, 3, 3)
+            seq_names = batch[12] # tuple of strings
 
-    
-#     for cam_id in CAMERA_IDS:
-#         cam_data = cameras[cam_id]
-#         # 图像
-#         img_np = np.array(cam_data['rgb']).astype(np.float32) / 255.0
-#         images.append(img_np)
-#         # 深度图
-#         depth = cam_data['depth']
-#         # 计算深度图的范围
-#         depth_np = np.array(depth, dtype=np.float32)
-#         vmin, vmax = depth_np.min(), depth_np.max()
-#         depth_ranges[cam_id] = (vmin, vmax)
-#         # 转换为伪彩色
-#         depth_colormap = pil_to_colormap(depth)
-#         depths.append(depth_colormap)
-    
-#     # 6目图像并排显示
-#     fig_img, axes = plt.subplots(2, 3, figsize=(18, 12))
-#     for idx, (cam_id, img) in enumerate(zip(CAMERA_IDS, images)):
-#         row, col = idx // 3, idx % 3
-#         axes[row, col].imshow(img)
-#         axes[row, col].set_title(f"Camera {cam_id}")
-#         axes[row, col].axis('off')
-#     writer.add_figure(f'Images/sample', fig_img, global_step=sample_idx)
-#     plt.close(fig_img)
-    
-#     # 6目深度并排显示
-#     fig_depth, axes_d = plt.subplots(2, 3, figsize=(18, 12))
-#     for idx, (cam_id, dep) in enumerate(zip(CAMERA_IDS, depths)):
-#         row, col = idx // 3, idx % 3
-#         axes_d[row, col].imshow(dep)
-#         # 在标题中添加深度范围
-#         vmin, vmax = depth_ranges[cam_id]
-#         axes_d[row, col].set_title(f"Camera {cam_id} Depth [{vmin:.2f}m - {vmax:.2f}m]")
-#         axes_d[row, col].axis('off')
-#     writer.add_figure(f'Depths/sample', fig_depth, global_step=sample_idx)
-#     plt.close(fig_depth)
-    
-#     # 只在第一次记录K
-#     if not k_recorded:
-#         for cam_id in CAMERA_IDS:
-#             K = cameras[cam_id]['intrinsics']
-#             k_text = f"Camera {cam_id}: fx={K[0,0]:.1f}, fy={K[1,1]:.1f}, cx={K[0,2]:.1f}, cy={K[1,2]:.1f}"
-#             writer.add_text(f'K/Camera_{cam_id}', k_text, global_step=sample_idx)
-#         k_recorded = True
-    
-#     print(f"Logged sample {sample_idx+1}")
+            
+            B = images_1.shape[0]
+            for i in range(B):
+                seq_name = seq_names[i] if isinstance(seq_names, (list, tuple)) else seq_names
+                
+                # 相机1
+                add_image_depth_lidar_to_tensorboard(
+                    writer, f'Triclops/{seq_name}/Camera1',
+                    images_1[i], lidars_1[i], depths_1[i],
+                    batch_idx, i
+                )
+                
+                # 相机2
+                add_image_depth_lidar_to_tensorboard(
+                    writer, f'Triclops/{seq_name}/Camera2',
+                    images_2[i], lidars_2[i], depths_2[i],
+                    batch_idx, i
+                )
+                
+                # 相机3
+                add_image_depth_lidar_to_tensorboard(
+                    writer, f'Triclops/{seq_name}/Camera3',
+                    images_3[i], lidars_3[i], depths_3[i],
+                    batch_idx, i
+                )
+                
+                # 记录内参
+                K_1 = Ks_1[i].cpu().numpy()
+                K_2 = Ks_2[i].cpu().numpy()
+                K_3 = Ks_3[i].cpu().numpy()
+                
+                writer.add_text(f'Triclops/{seq_name}/Camera1_K', get_k_text(K_1), global_step=batch_idx)
+                writer.add_text(f'Triclops/{seq_name}/Camera2_K', get_k_text(K_2), global_step=batch_idx)
+                writer.add_text(f'Triclops/{seq_name}/Camera3_K', get_k_text(K_3), global_step=batch_idx)
+            
+            print(f"  Logged {B} triclops samples")
+        
+        else:
+            print(f"Unknown output format with {num_elements} elements")
+        
+        print(f"Completed batch {batch_idx+1}/{NUM_BATCHES_TO_LOG}")
 
 writer.close()
-print(f"Done! Run: tensorboard --logdir={LOG_DIR} to visualize.")
+print(f"\nDone! Run: tensorboard --logdir={LOG_DIR} to visualize.")

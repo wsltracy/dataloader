@@ -1,6 +1,9 @@
 import numpy as np
 import os
 from PIL import Image
+# from dgp.datasets import SynchronizedSceneDataset
+
+
 def read_pfm(filename):
     """读取 PFM 格式的深度图文件"""
     with open(filename, 'rb') as f:

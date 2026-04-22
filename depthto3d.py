@@ -4,7 +4,8 @@ import cv2
 import torch
 from tartan import TartanAirV1Dataset
 import matplotlib.pyplot as plt
-
+# from dgp.datasets import SynchronizedSceneDataset
+from demoall_tensor import UnifiedDataset
 def depth_to_pointcloud(rgb_image, depth_image, K, depth_scale=1.0):
     """
     将RGB-D图像转换为点云
@@ -140,24 +141,220 @@ def visualize_frame_2d(frame_data):
     plt.show()
 
 
+def main_2():
+    print("=" * 80)
+    print("DDAD 数据集点云可视化 - 相机 01 和 09")
+    print("=" * 80)
+
+    # 创建数据集，只启用 DDAD
+    dataset = UnifiedDataset(
+        split="train",
+        blendedmvs_enable=False,
+        tartan_enable=False,
+        matterport_enable=False,
+        ddad_enable=True,
+        ddad_max_samples=20,
+    )
+
+    print(f"\n总样本数: {len(dataset)}")
+
+    # 收集相机 01 和 09 的样本
+    samples_cam01 = []
+    samples_cam09 = []
+
+    for i in range(len(dataset)):
+        image, depth, K, original_h, original_w, seq_name, dataset_name, camera_id = dataset[i]
+
+        if camera_id == '01':
+            samples_cam01.append((image, depth, K, seq_name, original_h, original_w))
+        elif camera_id == '09':
+            samples_cam09.append((image, depth, K, seq_name, original_h, original_w))
+
+    print(f"\n相机 01 样本数: {len(samples_cam01)}")
+    print(f"相机 09 样本数: {len(samples_cam09)}")
+
+    # 选择一个样本进行可视化（取第一个）
+    if len(samples_cam01) > 0:
+        print("\n" + "=" * 80)
+        print("可视化相机 01 点云")
+        print("=" * 80)
+
+        image, depth, K, seq_name, original_h, original_w = samples_cam01[0]
+
+        # 转换为 numpy
+        image_np = image.permute(1, 2, 0).cpu().numpy()
+        depth_np = depth.squeeze(0).cpu().numpy()
+        K_np = K.cpu().numpy()
+
+        print(f"序列名: {seq_name}")
+        print(f"原始尺寸: {original_h} x {original_w}")
+        # print(f"Padding后尺寸: {TARGET_HEIGHT} x {TARGET_WIDTH}")
+        print(f"深度有效值: {(depth_np > 0).sum()} / {depth_np.size}")
+
+        # 2D 可视化
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # RGB 图像
+        axes[0].imshow(image_np)
+        axes[0].set_title(f"Camera 01 RGB - {seq_name}")
+        axes[0].axis('off')
+
+        # 深度图
+        depth_display = depth_np.copy()
+        valid_depth = depth_display[depth_display > 0]
+        if len(valid_depth) > 0:
+            vmin, vmax = valid_depth.min(), valid_depth.max()
+            depth_display = np.clip(depth_display, vmin, vmax)
+            depth_display[depth_display == 0] = vmin
+            im = axes[1].imshow(depth_display, cmap='jet')
+            axes[1].set_title(f"Depth (Camera 01)\nRange: [{vmin:.2f}, {vmax:.2f}]m")
+            plt.colorbar(im, ax=axes[1])
+        else:
+            axes[1].imshow(depth_display, cmap='jet')
+            axes[1].set_title("Depth (Camera 01) - No valid depth")
+        axes[1].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+
+        # 3D 点云
+        print("\n正在生成相机 01 点云...")
+        pcd, valid_mask = depth_to_pointcloud(image_np, depth_np, K_np)
+        print(f"点云点数: {len(pcd.points)}")
+
+        if len(pcd.points) > 0:
+            # 统计深度范围
+            points = np.asarray(pcd.points)
+            print(f"点云深度范围: {points[:, 2].min():.2f} - {points[:, 2].max():.2f} 米")
+
+            # 可视化
+            coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=5.0)
+            o3d.visualization.draw_geometries(
+                [pcd, coord_frame],
+                window_name=f"DDAD Camera 01 Point Cloud - {seq_name}",
+                width=1280, height=720,
+                point_show_normal=False
+            )
+        else:
+            print("没有有效点云数据")
+
+    # 可视化相机 09
+    if len(samples_cam09) > 0:
+        print("\n" + "=" * 80)
+        print("可视化相机 09 点云")
+        print("=" * 80)
+
+        image, depth, K, seq_name, original_h, original_w = samples_cam09[0]
+
+        # 转换为 numpy
+        image_np = image.permute(1, 2, 0).cpu().numpy()
+        depth_np = depth.squeeze(0).cpu().numpy()
+        K_np = K.cpu().numpy()
+
+        print(f"序列名: {seq_name}")
+        print(f"原始尺寸: {original_h} x {original_w}")
+        print(f"深度有效值: {(depth_np > 0).sum()} / {depth_np.size}")
+
+        # 2D 可视化
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # RGB 图像
+        axes[0].imshow(image_np)
+        axes[0].set_title(f"Camera 09 RGB - {seq_name}")
+        axes[0].axis('off')
+
+        # 深度图
+        depth_display = depth_np.copy()
+        valid_depth = depth_display[depth_display > 0]
+        if len(valid_depth) > 0:
+            vmin, vmax = valid_depth.min(), valid_depth.max()
+            depth_display = np.clip(depth_display, vmin, vmax)
+            depth_display[depth_display == 0] = vmin
+            im = axes[1].imshow(depth_display, cmap='jet')
+            axes[1].set_title(f"Depth (Camera 09)\nRange: [{vmin:.2f}, {vmax:.2f}]m")
+            plt.colorbar(im, ax=axes[1])
+        else:
+            axes[1].imshow(depth_display, cmap='jet')
+            axes[1].set_title("Depth (Camera 09) - No valid depth")
+        axes[1].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+
+        # 3D 点云
+        print("\n正在生成相机 09 点云...")
+        pcd, valid_mask = depth_to_pointcloud(image_np, depth_np, K_np)
+        print(f"点云点数: {len(pcd.points)}")
+
+        if len(pcd.points) > 0:
+            points = np.asarray(pcd.points)
+            print(f"点云深度范围: {points[:, 2].min():.2f} - {points[:, 2].max():.2f} 米")
+
+            coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=5.0)
+            o3d.visualization.draw_geometries(
+                [pcd, coord_frame],
+                window_name=f"DDAD Camera 09 Point Cloud - {seq_name}",
+                width=1280, height=720,
+                point_show_normal=False
+            )
+        else:
+            print("没有有效点云数据")
+
+    # 可选：同时可视化两个相机的点云（需要确保是同一场景）
+    # if len(samples_cam01) > 0 and len(samples_cam09) > 0:
+    #     print("\n" + "=" * 80)
+    #     print("同时可视化相机 01 和 09 的点云")
+    #     print("=" * 80)
+    #
+    #     image1, depth1, K1, seq_name1, _, _ = samples_cam01[0]
+    #     image9, depth9, K9, seq_name9, _, _ = samples_cam09[0]
+    #
+    #     image1_np = image1.permute(1, 2, 0).cpu().numpy()
+    #     depth1_np = depth1.squeeze(0).cpu().numpy()
+    #     K1_np = K1.cpu().numpy()
+    #
+    #     image9_np = image9.permute(1, 2, 0).cpu().numpy()
+    #     depth9_np = depth9.squeeze(0).cpu().numpy()
+    #     K9_np = K9.cpu().numpy()
+    #
+    #     pcd1, _ = depth_to_pointcloud(image1_np, depth1_np, K1_np)
+    #     pcd9, _ = depth_to_pointcloud(image9_np, depth9_np, K9_np)
+    #
+    #     # 给不同相机点云不同颜色
+    #     pcd1.paint_uniform_color([1, 0, 0])  # 相机01 - 红色
+    #     pcd9.paint_uniform_color([0, 0, 1])  # 相机09 - 蓝色
+    #
+    #     print(f"相机01 点数: {len(pcd1.points)}")
+    #     print(f"相机09 点数: {len(pcd9.points)}")
+    #
+    #     coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=5.0)
+    #     o3d.visualization.draw_geometries(
+    #         [pcd1, pcd9, coord_frame],
+    #         window_name="DDAD Camera 01 (Red) vs Camera 09 (Blue)",
+    #         width=1280, height=720,
+    #         point_show_normal=False
+    #     )
+
+
 def main():
     # 初始化数据集（设置为test模式以便固定索引）
-    dataset = TartanAirV1Dataset(
-        split="test",  # 使用test模式，按顺序读取
-        root_dir="/media/wsl/SANDISK ELE/dataset/tartanair",
-        env="carwelding",  # 根据你的数据修改
-        difficulty="Hard",  # 根据你的数据修改
-        traj_id=None,  # 可以指定特定轨迹，如 "P001"
-        len_test=1000,
-    )
+    # dataset = TartanAirV1Dataset(
+    #     split="test",  # 使用test模式，按顺序读取
+    #     root_dir="/media/wsl/SANDISK ELE/dataset/tartanair",
+    #     env="carwelding",  # 根据你的数据修改
+    #     difficulty="Hard",  # 根据你的数据修改
+    #     traj_id=None,  # 可以指定特定轨迹，如 "P001"
+    #     len_test=1000,
+    # )
     
     # 方式1：通过索引读取（test模式下按顺序）
     # frame_idx_in_dataset = 0  # 第一个样本
     # sample = dataset[frame_idx_in_dataset]
     
     # 方式2：通过轨迹名和帧号读取
-    frame_data = load_specific_frame(dataset, traj_name="P001", frame_idx=200)
-    
+    # frame_data = load_specific_frame(dataset, traj_name="P001", frame_idx=200)
+
+
 
     
     # 先查看2D图像和深度图
@@ -217,4 +414,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main_2()
