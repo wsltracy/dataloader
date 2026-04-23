@@ -129,7 +129,7 @@ class UnifiedDataset(Dataset):
 
     def __init__(
             self,
-            split: str = "train",
+            split: str = "test",
             # BlendedMVS 配置
             blendedmvs_root: str = "./datas/BlendedMVS",
             blendedmvs_enable: bool = True,

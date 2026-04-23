@@ -113,7 +113,7 @@ def main():
     # 创建数据集（加载所有样本，用于可视化）
     print("\n正在加载数据集...")
     dataset = UnifiedDataset(
-        split="train",
+        split="test",
         blendedmvs_enable=True,
         blendedmvs_max_samples=10,  # 限制样本数量，避免过多
         tartan_enable=True,

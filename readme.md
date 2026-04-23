@@ -4,13 +4,12 @@
 
 dgp:
 ```
+mkdir package && cd package
 git clone git@github.com:TRI-ML/dgp.git
-cp Dockerfile ./dgp/Dockerfile
 ```
 
 build image
 ```
-cd dgp
 docker build -t kakaxi314/tsdf .
 ```
 
