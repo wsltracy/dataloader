@@ -15,7 +15,7 @@ DELETE_ZIP_AFTER_EXTRACT = False   # 是否解压后删除原 zip 文件
 ZIP_NAMES = [
     "undistorted_color_images.zip",
     "undistorted_depth_images.zip",
-    "undistorted_camera_intrinsics.zip"
+    "undistorted_camera_parameters.zip"
 ]
 
 def extract_zip_clean(zip_path, extract_to):
