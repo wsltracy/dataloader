@@ -135,7 +135,7 @@ class UnifiedDataset(Dataset):
             blendedmvs_enable: bool = True,
             blendedmvs_max_samples: int = None,
             # TartanAir 配置
-            tartan_root: str = "./datas/tartanair",
+            tartan_root: str = "./datas/tartanair_data",
             tartan_enable: bool = True,
             tartan_max_samples: int = None,
             # Matterport3D 配置
@@ -269,7 +269,7 @@ class UnifiedDataset(Dataset):
                     right_img_dir = osp.join(image_right_base, traj, "image_right")
                     left_depth_dir = osp.join(depth_left_base, traj, "depth_left")
                     right_depth_dir = osp.join(depth_right_base, traj, "depth_right")
-
+                    # print(left_img_dir)
 
                     if not osp.exists(left_img_dir):
                         continue
@@ -291,14 +291,15 @@ class UnifiedDataset(Dataset):
                         # 左目深度路径
                         left_depth_filename = f"{frame_idx:06d}_left_depth.npy"
                         left_depth_path = osp.join(left_depth_dir, left_depth_filename)
+
                         if not osp.exists(left_depth_path):
-                            left_depth_path = osp.join(traj_path, "depth_left", f"{frame_idx:06d}.npy")
+                            continue
 
                         # 右目深度
                         right_depth_filename = f"{frame_idx:06d}_right_depth.npy"
                         right_depth_path = osp.join(right_depth_dir, right_depth_filename)
                         if not osp.exists(right_depth_path):
-                            right_depth_path = osp.join(traj_path, "depth_right", f"{frame_idx:06d}.npy")
+                            continue
 
                         # 左目样本
                         if osp.exists(left_depth_path):
@@ -596,11 +597,11 @@ if __name__ == "__main__":
         split="test",
         blendedmvs_enable=False,
         blendedmvs_max_samples=10,
-        tartan_enable=False,
+        tartan_enable=True,
         tartan_max_samples=10,
         matterport_enable=False,
         matterport_max_samples=10,
-        ddad_enable=True,
+        ddad_enable=False,
         ddad_max_samples=10,
     )
 
