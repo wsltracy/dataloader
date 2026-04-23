@@ -143,7 +143,7 @@ class UnifiedDataset(Dataset):
             matterport_enable: bool = True,
             matterport_max_samples: int = None,
             # DDAD 配置
-            ddad_json_path: str = "./datas/DDAD/ddad_train_val/ddad_2.json",
+            ddad_json_path: str = "./datas/DDAD/ddad_train_val/ddad.json",
             ddad_enable: bool = True,
             ddad_max_samples: int = None,
     ):

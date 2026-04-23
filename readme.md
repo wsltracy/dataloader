@@ -19,6 +19,12 @@ create container
 docker compose run --rm dataset
 ```
 
+## dataprocess
+
+unzip matterport3D
+```bash
+python unzip_mat.py 
+```
 
 ## test 
 

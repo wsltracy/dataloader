@@ -9,7 +9,7 @@ import zipfile
 import shutil
 import tempfile
 
-ROOT_DIR = "/media/weishanling/SANDISK ELE/dataset/matterport/data/v1/scans"
+ROOT_DIR = "./datas/matterport/data/v1/scans"
 DELETE_ZIP_AFTER_EXTRACT = False   # 是否解压后删除原 zip 文件
 
 ZIP_NAMES = [
