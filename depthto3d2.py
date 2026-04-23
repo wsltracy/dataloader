@@ -8,7 +8,6 @@ st.set_page_config(layout="wide", page_title="DDAD 点云可视化 - 所有相�
 
 st.title("DDAD 数据集点云可视化 - 所有 6 个相机")
 
-
 @st.cache_resource
 def load_data():
     """加载数据集"""
@@ -72,7 +71,7 @@ def depth_to_colored(depth_np, valid_depth):
         vmin, vmax = valid_depth.min(), valid_depth.max()
 
         if vmax - vmin > 1e-6:
-            depth_normalized = (depth_np - vmin) / (vmax - vmin)
+            depth_normalized = np.log((depth_np - vmin) / (vmax - vmin)+1e-6)
         else:
             depth_normalized = np.zeros_like(depth_np)
 

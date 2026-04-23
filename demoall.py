@@ -131,19 +131,19 @@ class UnifiedDataset(Dataset):
             self,
             split: str = "train",
             # BlendedMVS 配置
-            blendedmvs_root: str = "/media/wsl/SANDISK ELE/dataset/BlendedMVS",
+            blendedmvs_root: str = "./datas/BlendedMVS",
             blendedmvs_enable: bool = True,
             blendedmvs_max_samples: int = None,
             # TartanAir 配置
-            tartan_root: str = "/media/wsl/SANDISK ELE/dataset/tartanair",
+            tartan_root: str = "./datas/tartanair",
             tartan_enable: bool = True,
             tartan_max_samples: int = None,
             # Matterport3D 配置
-            matterport_root: str = "/media/wsl/SANDISK ELE/dataset/matterport/data/v1/scans",
+            matterport_root: str = "./datas/matterport/data/v1/scans",
             matterport_enable: bool = True,
             matterport_max_samples: int = None,
             # DDAD 配置
-            ddad_json_path: str = "/media/wsl/SANDISK ELE/dataset/DDAD/ddad_train_val/ddad_2.json",
+            ddad_json_path: str = "./datas/DDAD/ddad_train_val/ddad_2.json",
             ddad_enable: bool = True,
             ddad_max_samples: int = None,
     ):
@@ -241,26 +241,40 @@ class UnifiedDataset(Dataset):
 
             # 遍历所有难度文件夹 (Easy, Hard)
             difficulty_dirs = [d for d in os.listdir(env_path)
-                               if osp.isdir(osp.join(env_path, d)) and d in ['Easy', 'Hard']]
+                               if osp.isdir(osp.join(env_path, d)) and d in [ 'Easy','Hard']]
 
             for difficulty in difficulty_dirs:
                 base_path = osp.join(env_path, difficulty)
 
+                # ========== 修改：新的目录结构 ==========
+                # 构建深度图和图像的基础路径（包含 env/difficulty 子目录）
+                depth_left_base = osp.join(base_path, "depth_left", env, difficulty)
+                depth_right_base = osp.join(base_path, "depth_right", env, difficulty)
+                image_left_base = osp.join(base_path, "image_left", env, difficulty)
+                image_right_base = osp.join(base_path, "image_right", env, difficulty)
+                # print(image_left_base)
+
+                if not osp.exists(image_left_base):
+                    continue
+
                 # 获取所有轨迹 (P开头的文件夹)
-                traj_dirs = [d for d in os.listdir(base_path)
-                             if osp.isdir(osp.join(base_path, d)) and d.startswith('P')]
+                traj_dirs = [d for d in os.listdir(image_left_base)
+                             if osp.isdir(osp.join(image_left_base, d)) and d.startswith('P')]
 
                 for traj in traj_dirs:
                     if max_samples and count >= max_samples:
                         break
+                    # 构建各目录的完整路径
+                    left_img_dir = osp.join(image_left_base, traj, "image_left")
+                    right_img_dir = osp.join(image_right_base, traj, "image_right")
+                    left_depth_dir = osp.join(depth_left_base, traj, "depth_left")
+                    right_depth_dir = osp.join(depth_right_base, traj, "depth_right")
 
-                    traj_path = osp.join(base_path, traj)
-                    left_dir = osp.join(traj_path, "image_left")
 
-                    if not osp.exists(left_dir):
+                    if not osp.exists(left_img_dir):
                         continue
 
-                    left_imgs = sorted(glob.glob(osp.join(left_dir, "*.png")))
+                    left_imgs = sorted(glob.glob(osp.join(left_img_dir, "*.png")))
 
                     for left_path in left_imgs:
                         if max_samples and count >= max_samples:
@@ -271,16 +285,18 @@ class UnifiedDataset(Dataset):
                         frame_idx = int(match.group(1)) if match else 0
 
                         # 右目图像路径
-                        right_path = left_path.replace("image_left", "image_right")
-                        right_path = right_path.replace("_left.png", "_right.png")
+                        right_filename = f"{frame_idx:06d}_right.png"
+                        right_path = osp.join(right_img_dir, right_filename)
 
-                        # 左目深度
-                        left_depth_path = osp.join(traj_path, "depth_left", f"{frame_idx:06d}_left_depth.npy")
+                        # 左目深度路径
+                        left_depth_filename = f"{frame_idx:06d}_left_depth.npy"
+                        left_depth_path = osp.join(left_depth_dir, left_depth_filename)
                         if not osp.exists(left_depth_path):
                             left_depth_path = osp.join(traj_path, "depth_left", f"{frame_idx:06d}.npy")
 
                         # 右目深度
-                        right_depth_path = osp.join(traj_path, "depth_right", f"{frame_idx:06d}_right_depth.npy")
+                        right_depth_filename = f"{frame_idx:06d}_right_depth.npy"
+                        right_depth_path = osp.join(right_depth_dir, right_depth_filename)
                         if not osp.exists(right_depth_path):
                             right_depth_path = osp.join(traj_path, "depth_right", f"{frame_idx:06d}.npy")
 
@@ -577,15 +593,15 @@ if __name__ == "__main__":
     print("=" * 80)
 
     dataset = UnifiedDataset(
-        split="train",
-        blendedmvs_enable=True,
+        split="test",
+        blendedmvs_enable=False,
         blendedmvs_max_samples=10,
-        tartan_enable=True,
+        tartan_enable=False,
         tartan_max_samples=10,
-        matterport_enable=True,
+        matterport_enable=False,
         matterport_max_samples=10,
-        ddad_enable=False,
-        ddad_max_samples=None,
+        ddad_enable=True,
+        ddad_max_samples=10,
     )
 
     print(f"\n总样本数: {len(dataset)}")

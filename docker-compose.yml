@@ -22,7 +22,7 @@ services:
       - XDG_RUNTIME_DIR=/tmp/runtime-root
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - PYTHONPATH=/root/dgp:$PYTHONPATH
+
 
 #    environment:
 #      - DISPLAY=${DISPLAY}
@@ -30,12 +30,12 @@ services:
 #      - QT_X11_NO_MITSHM=1
 
     volumes:
-       - ./:/root/DATASET
-       - /run/media/wsl/SANDISK ELE/dataset/:/media/wsl/SANDISK ELE/dataset/
-       - /run/media/wsl/SANDISK ELE/dgp-master:/root/dgp
+       - ./:/root/dataset
+       - /run/media/wsl/SANDISK ELE1/dataset/:/root/dataset/datas/
+
        - pip_cache:/root/.cache/pip
 
-    working_dir: /root/DATASET
+    working_dir: /root/dataset
 
 volumes:
   pip_cache:
