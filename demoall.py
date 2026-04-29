@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from collections import defaultdict
 from dgp.datasets import SynchronizedSceneDataset
-
+import json
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
@@ -435,7 +435,7 @@ class UnifiedDataset(Dataset):
 
         try:
             # 创建 DDAD 数据集
-            dataset = SynchronizedSceneDataset(
+            self.ddad_dataset = SynchronizedSceneDataset(
                 json_path,
                 datum_names=('lidar','CAMERA_01', 'CAMERA_05','CAMERA_06','CAMERA_07','CAMERA_08','CAMERA_09'),
                 generate_depth_from_datum='lidar',
@@ -443,39 +443,38 @@ class UnifiedDataset(Dataset):
             )
 
             count = 0
-            total_frames = len(dataset)
-            # print("total:",total_frames)
+            total_frames = len(self.ddad_dataset)
+            print("total:",total_frames)
             for idx in range(total_frames):
                 if max_samples and count >= max_samples:
                     break
 
                 try:
-                    sample = dataset[idx]
+                    # sample = dataset[idx]
 
                     # 遍历每个相机
                     for cam_idx, cam_id in enumerate(camera_ids):
                         if max_samples and count >= max_samples:
                             break
 
-                        cam_data = sample[0][cam_idx]
-
-                        # 获取图像
-                        img_np = np.array(cam_data['rgb']).astype(np.float32) / 255.0
-
-                        # 获取深度图（从 lidar 投影生成）
-                        depth_pil = cam_data['depth']
-                        depth_np = np.array(depth_pil, dtype=np.float32)
-
-                        # 获取内参
-                        K = cam_data['intrinsics']
+                        # cam_data = sample[0][cam_idx]
+                        #
+                        # # 获取图像
+                        # img_np = np.array(cam_data['rgb']).astype(np.float32) / 255.0
+                        #
+                        # # 获取深度图（从 lidar 投影生成）
+                        # depth_pil = cam_data['depth']
+                        # depth_np = np.array(depth_pil, dtype=np.float32)
+                        #
+                        # # 获取内参
+                        # K = cam_data['intrinsics']
 
                         # 存储样本
                         self.samples.append({
                             'dataset': 'DDAD',
                             'seq_name': f"DDAD_frame{idx}_cam{cam_id}",
-                            'image': img_np,  # 直接存储 numpy 数组
-                            'depth': depth_np,
-                            'K': K,
+                            'ddad_idx': idx,
+                            'ddad_cam_idx': cam_idx,
                             'camera_id': cam_id,
                         })
                         count += 1
@@ -556,9 +555,13 @@ class UnifiedDataset(Dataset):
             K = sample['K'].copy()
         else:
             # DDAD：已经加载好的 numpy 数组
-            image = sample['image']*255.0
-            depth = sample['depth']
-            K = sample['K'].copy()
+            ddad_sample= self.ddad_dataset[sample['ddad_idx']]
+            cam_data=ddad_sample[0][sample['ddad_cam_idx']]
+            # 提取数据
+            image = np.array(cam_data['rgb']).astype(np.float32)
+            depth = np.array(cam_data['depth'], dtype=np.float32)
+            K = cam_data['intrinsics']
+
 
 
             # 确保图像格式正确 (H, W, C)
@@ -597,11 +600,11 @@ if __name__ == "__main__":
         split="test",
         blendedmvs_enable=False,
         blendedmvs_max_samples=10,
-        tartan_enable=True,
+        tartan_enable=False,
         tartan_max_samples=10,
         matterport_enable=False,
         matterport_max_samples=10,
-        ddad_enable=False,
+        ddad_enable=True,
         ddad_max_samples=10,
     )
 
