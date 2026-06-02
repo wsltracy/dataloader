@@ -343,44 +343,52 @@ class FastStreaming(StreamingDataset):
 
     def __init__(self, transform=None, **kwargs):
         super().__init__(**kwargs)
-        self.transform = transform
+        # self.transform = transform
 
     def __getitem__(self, idx):
         sample = super().__getitem__(idx)
         raw_bytes = bytearray(sample["rgb"])
         uint8_tensor = torch.frombuffer(raw_bytes, dtype=torch.uint8)
         I = decode_jpeg(uint8_tensor, mode=ImageReadMode.RGB)
-        raw_bytes = bytearray(sample["dep"])
-        uint8_tensor = torch.frombuffer(raw_bytes, dtype=torch.uint8)
-        D = decode_png(uint8_tensor, mode=ImageReadMode.UNCHANGED)
-        D = D.to(torch.float32) / 256.
+        D = torch.from_numpy(sample["dep"])[None]
+        # raw_bytes = bytearray(sample["dep"])
+        # uint8_tensor = torch.frombuffer(raw_bytes, dtype=torch.uint8)
+        # D = decode_png(uint8_tensor, mode=ImageReadMode.UNCHANGED)
+        # D = D.to(torch.float32) / 256.
+        # D = D.to(torch.float32)
         S = D.clone()
         K = torch.from_numpy(sample["kcam"])
-        I, S, K, D = self.transform(I, S, K, D)
+        # I, S, K, D = self.transform(I, S, K, D)
         return I, S, K, D
 
 
+
+
 def test():
-    import augs
-    transform = augs.Compose([
-        augs.kaRCrop(),
-        augs.kaRFlip(),
-        augs.kaJitter(),
-        augs.kaRScale(),
-        augs.kaRSample(),
-        augs.kaNorm(),
-    ])
+    # import augs
+    # transform = augs.Compose([
+    #     augs.kaRCrop(),
+    #     augs.kaRFlip(),
+    #     augs.kaJitter(),
+    #     augs.kaRScale(),
+    #     augs.kaRSample(),
+    #     augs.kaNorm(),
+    # ])
     dataset = FastStreaming(
-        local="datas/nyu_streaming/train",
-        shuffle=True,
-        transform=transform,
-        batch_size=256,
+        local="datas/DDAD_streaming/train",
+        shuffle=False,
+        transform=None,
+        batch_size=1,
     )
 
     I, S, K, D = dataset[0]
-    I = I.permute(1, 2, 0).numpy()
-    S = S.permute(1, 2, 0).squeeze().numpy()
-    D = D.permute(1, 2, 0).squeeze().numpy()
+    print(I.shape)
+    print(S.shape)
+    print(K.shape)
+    print(D.shape)
+    # I = I.permute(1, 2, 0).numpy()
+    # S = S.permute(1, 2, 0).squeeze().numpy()
+    # D = D.permute(1, 2, 0).squeeze().numpy()
 
     # transform = augs.Compose([
     #     augs.RandomResizedCrop(224),
@@ -411,5 +419,6 @@ def test():
 
 
 if __name__ == '__main__':
-    create_ddad_streaming()
+    test()
+    # create_ddad_streaming()
     # create_BlendedMVS_streaming()
