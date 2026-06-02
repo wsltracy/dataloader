@@ -11,7 +11,7 @@ cd ..
 
 build image
 ```
-docker build -t kakaxi314/tsdf .
+docker build -t wsl/dataset .
 ```
 
 create container
@@ -24,6 +24,11 @@ docker compose run --rm dataset
 unzip matterport3D
 ```bash
 python unzip_mat.py 
+```
+unzip DDAD
+
+```bash
+tar -xvf DDAD.tar -C /mnt/datas/DDAD
 ```
 
 ## test 

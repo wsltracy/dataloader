@@ -1,4 +1,4 @@
-from kakaxi314/tsdf:latest
+FROM kakaxi314/tsdf:latest
 WORKDIR /workspace
 COPY package/dgp /workspace/dgp
 WORKDIR /workspace/dgp
