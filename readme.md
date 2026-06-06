@@ -47,3 +47,20 @@ DDAD camera_only show
 ```bash
 streamlit run depthto3d2.py
 ```
+
+IRS:
+list
+```bash
+docker build -t wsl/dataset .
+```
+
+hypeisim
+csv
+reload image
+```bash
+# 添加执行权限
+chmod +x download_frames.sh
+
+# 运行
+`./download_frames.sh`
+```

@@ -36,8 +36,13 @@ services:
        - /media2/dataset/BlendedMVS:/root/dataset/datas/BlendedMVS
        - /media2/dataset/BlendedMVS_streaming:/root/dataset/datas/BlendedMVS_streaming
        - /media2/dataset/tartanair_data:/root/dataset/datas/tartanair_data
-       - /media2/dataset/tartanair_streaming:/root/dataset/datas/tartanair_streaming
+#       - /media2/dataset/tartanair_streaming:/root/dataset/datas/tartanair_streaming
+       - /media1/data/tartanair_streaming/:/root/dataset/datas/tartanair_streaming
+       - /media2/dataset/IRS/:/root/dataset/datas/IRS
+       - /media2/dataset/IRS_ext/:/root/dataset/datas/IRS_ext
+       - /media1/data/IRS_streaming/:/root/dataset/datas/IRS_streaming
        - /media2/dataset/matterport:/root/dataset/datas/matterport
+       - /media2/dataset/Hypersim/:/root/dataset/datas/Hypersim
        - pip_cache:/root/.cache/pip
 
     working_dir: /root/dataset

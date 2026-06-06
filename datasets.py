@@ -24,6 +24,129 @@ from dgp.datasets import SynchronizedSceneDataset
 from streaming import MDSWriter, StreamingDataset, StreamingDataLoader
 from torchvision.io import decode_jpeg, decode_png, ImageReadMode
 
+import io
+import numpy as np
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+import torch
+import OpenEXR, Imath
+import pandas as pd
+from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
+# ---------- EXR 读取函数 ----------
+def exr2hdr(exrpath):
+
+    File = OpenEXR.InputFile(exrpath)
+    PixType = Imath.PixelType(Imath.PixelType.FLOAT)
+    DW = File.header()['dataWindow']
+    CNum = len(File.header()['channels'].keys())
+    if CNum > 1:
+        Channels = ['R', 'G', 'B']
+        CNum = 3
+    else:
+        Channels = ['G']
+    Size = (DW.max.x - DW.min.x + 1, DW.max.y - DW.min.y + 1)
+    Pixels = [np.frombuffer(File.channel(c, PixType), dtype=np.float32) for c in Channels]
+    hdr = np.zeros((Size[1], Size[0], CNum), dtype=np.float32)
+    if CNum == 1:
+        hdr[:, :, 0] = np.reshape(Pixels[0], (Size[1], Size[0]))
+    else:
+        hdr[:, :, 0] = np.reshape(Pixels[0], (Size[1], Size[0]))
+        hdr[:, :, 1] = np.reshape(Pixels[1], (Size[1], Size[0]))
+        hdr[:, :, 2] = np.reshape(Pixels[2], (Size[1], Size[0]))
+    return hdr
+
+def load_exr(filename):
+    hdr = exr2hdr(filename)
+    h, w, c = hdr.shape
+    if c == 1:
+        hdr = np.squeeze(hdr)
+    return hdr
+
+# ---------- RGB 图像加载函数 ----------
+def load_rgb(filename):
+    from skimage import io
+    img = None
+    if filename.find('.npy') > 0:
+        img = np.load(filename)
+    else:
+        img = io.imread(filename)
+        if len(img.shape) == 2:
+            img = img[:, :, np.newaxis]
+            img = np.pad(img, ((0, 0), (0, 0), (0, 2)), 'constant')
+            img[:, :, 1] = img[:, :, 0]
+            img[:, :, 2] = img[:, :, 0]
+        h, w, c = img.shape
+        if c == 4:
+            img = img[:, :, :3]
+    return img  # uint8, (H,W,3)
+
+# ---------- 深度计算辅助函数 ----------
+def disparity_to_depth_left(disp, fx, baseline):
+    with np.errstate(divide='ignore', invalid='ignore'):
+        depth = fx * baseline / disp
+        depth[disp <= 0] = 0.0
+        depth = np.nan_to_num(depth, nan=0.0)
+    return depth
+
+def left_depth_to_right_depth(depth_left, disp_left):
+    H, W = depth_left.shape
+    depth_right = np.zeros_like(depth_left)
+    for y in range(H):
+        valid = (disp_left[y] > 0) & (depth_left[y] > 0)
+        if not np.any(valid):
+            continue
+        x_l = np.arange(W)[valid]
+        d = disp_left[y][valid]
+        x_r = np.round(x_l - d).astype(int)
+        mask = (x_r >= 0) & (x_r < W)
+        x_l = x_l[mask]
+        x_r = x_r[mask]
+        if len(x_r) == 0:
+            continue
+        unique_xr, inverse = np.unique(x_r, return_inverse=True)
+        min_depth = np.full(len(unique_xr), np.inf)
+        for i, idx in enumerate(inverse):
+            val = depth_left[y, x_l[i]]
+            if val < min_depth[idx]:
+                min_depth[idx] = val
+        depth_right[y, unique_xr] = min_depth
+    return depth_right
+
+def mask(depth,sigma=12.0):
+    valid_depths = depth[depth > 0]
+
+    if valid_depths.size > 0:
+        global_median = np.median(valid_depths)
+
+        lower_bound = global_median / sigma
+        upper_bound = global_median * sigma
+
+        depth[
+            (depth <= 0) |
+            (depth < lower_bound) |
+            (depth > upper_bound)
+        ] = 0
+
+    return depth
+def read_npy(filename, sigma=12.0):
+    """
+    读取 TartanAir 的 npy 深度图，并进行深度范围过滤
+
+    Args:
+        filename: .npy depth file
+        sigma: 深度过滤系数
+
+    Returns:
+        depth: np.ndarray (H, W), float32
+        scale: float
+    """
+    depth = np.load(filename).astype(np.float32)
+    depth = mask(depth,sigma)
+
+    return depth
+
 
 class DDADStreamingSource(torch.utils.data.Dataset):
     def __init__(self, mode, scale=256):
@@ -76,15 +199,15 @@ class DDADStreamingSource(torch.utils.data.Dataset):
         return {"rgb": jpeg_bytes, "dep": dep, "kcam": Kcam}
 
 
-class tartanairStreamingSource(torch.utils.data.Dataset):
+class TartanAirStreamingSource(torch.utils.data.Dataset):
     def __init__(self, mode, scale=256):
         super().__init__()
         self.scale = scale
-        root_dir = "dataset/tartanair_data/"
-        K_cam = np.array([[320.0, 0.0, 320.0],
-                          [0.0, 320.0, 240.0],
-                          [0.0, 0.0, 1.0]], dtype=np.float32)
-        self.K_cam = K_cam
+        root_dir = "datas/tartanair_data/"
+        # K_cam = np.array([[320.0, 0.0, 320.0],
+        #                   [0.0, 320.0, 240.0],
+        #                   [0.0, 0.0, 1.0]], dtype=np.float32)
+        # self.K_cam = K_cam
         self.samples = []
 
         # 遍历所有环境文件夹
@@ -165,24 +288,30 @@ class tartanairStreamingSource(torch.utils.data.Dataset):
                                 'depth_path': right_depth_path,
                             })
 
+
+
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, index):
         image_path = self.samples[index]['image_path']
         depth_path = self.samples[index]['depth_path']
-
+        K_cam = np.array([[320.0, 0.0, 320.0],
+                          [0.0, 320.0, 240.0],
+                          [0.0, 0.0, 1.0]], dtype=np.float32)
 
         rgb = Image.open(image_path).convert('RGB')
 
-        dep, _ = read_pfm(depth_path)
+        dep= read_npy(depth_path,sigma=12.0)
 
         dep = np.clip(dep, None, 127)
         dep = (dep * self.scale).astype(np.uint16)
         # dep = Image.fromarray(dep)
+        byte_io = io.BytesIO()
+        rgb.save(byte_io, format="JPEG", quality=90)
+        jpeg_bytes = byte_io.getvalue()
 
-
-        return {"rgb": jpeg_bytes, "dep": dep, "kcam": self.K_cam}
+        return {"rgb": jpeg_bytes, "dep": dep, "kcam": K_cam}
 
 
 def read_cam_file_blendedmvs(filename):
@@ -291,6 +420,106 @@ class BlendedMVSStreamingSource(torch.utils.data.Dataset):
         return {"rgb": jpeg_bytes, "dep": dep, "kcam": Kcam}
 
 
+class IRSStreamingSource(Dataset):
+    def __init__(self, mode, root_dir='datas/IRS_ex', scale=256,
+                 fx=480.0, fy=480.0, cx=480.0, cy=270.0, baseline=0.1):
+        if mode not in ['train', 'val']:
+            raise NotImplementedError(f"mode {mode} not supported, use 'train' or 'val'")
+
+        self.mode = mode
+        self.root_dir = root_dir
+        self.scale = scale
+        self.fx = fx
+        self.fy = fy
+        self.cx = cx
+        self.cy = cy
+        self.baseline = baseline
+
+        # 根据 mode 选择 list 文件
+        if mode == 'train':
+            list_file = os.path.join(root_dir, 'irs_train.list')
+        else:
+            list_file = os.path.join(root_dir, 'irs_test.list')
+
+        if not os.path.exists(list_file):
+            raise FileNotFoundError(f"List file not found: {list_file}")
+
+        with open(list_file, 'r') as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        self.samples = []  # 每个元素为 (side, left_path, right_path, disp_path)
+
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            left_rel, right_rel, disp_rel = parts[0], parts[1], parts[2]
+            left_abs = os.path.join(root_dir, left_rel)
+            right_abs = os.path.join(root_dir, right_rel)
+            disp_abs = os.path.join(root_dir, disp_rel)
+
+            # 检查必需文件是否存在
+            if not (os.path.exists(left_abs) and os.path.exists(right_abs) and os.path.exists(disp_abs)):
+                # print(f"Warning: skipping line with missing files: {line}")
+                continue
+            # print(f" line with  files: {line}")
+            # 添加左目和右目样本
+            self.samples.append(('left', left_rel, right_rel, disp_rel))
+            self.samples.append(('right', left_rel, right_rel, disp_rel))
+        print("len of samples:",len(self.samples))
+        if len(self.samples) == 0:
+            raise RuntimeError(f"No valid samples found in {list_file}")
+
+        # 内参矩阵 K
+        self.K = np.array([
+            [fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]
+        ], dtype=np.float32)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        side, left_path, right_path, disp_path = self.samples[idx]
+        # 构建完整路径
+        left_path = os.path.join(self.root_dir, left_path)
+        right_path = os.path.join(self.root_dir, right_path)
+        disp_path = os.path.join(self.root_dir, disp_path)
+
+        # 读取视差图
+        disp = load_exr(disp_path)  # shape (H, W), float32
+
+        # 计算左深度图
+        depth_left = disparity_to_depth_left(disp, self.fx, self.baseline)
+
+        if side == 'left':
+            img = load_rgb(left_path)
+            depth = depth_left
+        else:  # right
+            img = load_rgb(right_path)
+            depth = left_depth_to_right_depth(depth_left, disp)
+
+        #mask
+        depth = mask(depth, sigma=12.0)
+        # 深度裁剪与缩放
+        depth = np.clip(depth, 0, 127)
+        depth_uint16 = (depth * self.scale).astype(np.uint16)
+
+        # RGB 图像转为 JPEG 字节流
+        img_pil = Image.fromarray(img)
+        byte_io = io.BytesIO()
+        img_pil.save(byte_io, format="JPEG", quality=90)
+        jpeg_bytes = byte_io.getvalue()
+
+        return {
+            "rgb": jpeg_bytes,
+            "dep": depth_uint16,
+            "kcam": self.K
+        }
+
+
+
 def identity_collate(batch):
     return batch
 
@@ -337,6 +566,68 @@ def create_BlendedMVS_streaming():
             for batch in tqdm(dataloader):
                 for sample in batch:
                     writer.write(sample)
+def create_tartanair_streaming():
+    splits = ("train",)
+
+    for split in splits:
+
+        source_ds = TartanAirStreamingSource(
+            mode=split,
+        )
+
+        print("num samples:", len(source_ds))
+
+        dataloader = DataLoader(
+            source_ds,
+            batch_size=1,
+            num_workers=8,
+            prefetch_factor=16,
+            collate_fn=identity_collate,
+            shuffle=True,
+        )
+
+        with MDSWriter(
+            out=f"datas/tartanair_streaming/{split}",
+            columns={
+                "rgb": "bytes",
+                "dep": "ndarray:uint16",
+                "kcam": "ndarray:float32:3,3",
+            },
+            size_limit="128mb",
+        ) as writer:
+
+            for batch in tqdm(dataloader):
+
+                for sample in batch:
+                    writer.write(sample)
+
+def create_IRS_streaming():
+    """仿照 create_ddad_streaming 创建训练集和验证集的流式存储"""
+    splits = ('train', 'test')
+    for split in splits:
+        source_ds = IRSStreamingSource(mode=split, root_dir='datas/IRS_ext', scale=256)
+        dataloader = DataLoader(
+            source_ds,
+            batch_size=1,
+            num_workers=8,
+            prefetch_factor=16,
+            collate_fn=identity_collate,
+            shuffle=True,
+        )
+
+        output_dir = f"datas/IRS_streaming/{split}"
+        with MDSWriter(
+            out=output_dir,
+            columns={
+                "rgb": "bytes",
+                "dep": "ndarray:uint16",
+                "kcam": "ndarray:float32:3,3",
+            },
+            size_limit='128mb'
+        ) as writer:
+            for batch in tqdm(dataloader, desc=f"Writing IRS {split}"):
+                for sample in batch:
+                    writer.write(sample)
 
 
 class FastStreaming(StreamingDataset):
@@ -354,7 +645,7 @@ class FastStreaming(StreamingDataset):
         # raw_bytes = bytearray(sample["dep"])
         # uint8_tensor = torch.frombuffer(raw_bytes, dtype=torch.uint8)
         # D = decode_png(uint8_tensor, mode=ImageReadMode.UNCHANGED)
-        # D = D.to(torch.float32) / 256.
+        D = D.to(torch.float32) / 256.
         # D = D.to(torch.float32)
         S = D.clone()
         K = torch.from_numpy(sample["kcam"])
@@ -375,7 +666,7 @@ def test():
     #     augs.kaNorm(),
     # ])
     dataset = FastStreaming(
-        local="datas/DDAD_streaming/train",
+        local="datas/IRS_streaming/train",
         shuffle=False,
         transform=None,
         batch_size=1,
@@ -417,8 +708,54 @@ def test():
     # for img, lab in tqdm(loader):
     #     print(img.shape)
 
+def visualize_samples(num_samples=4, log_dir="runs/IRS_test2"):
+    writer = SummaryWriter(log_dir)
+    dataset = FastStreaming(
+        local="datas/TartanAir_streaming/train",
+        shuffle=False,
+        transform=None,
+        batch_size=1,
+    )
+    for idx in range(num_samples):
+        I, S,K,D = dataset[idx]
+        # I: (C, H, W) uint8, D: (H, W) float (深度值单位: 米 / scale? 此处是原始深度值)
+        # 深度图归一化到 [0,1] 以便显示
+        D=D.squeeze(0)
+        # D=D.float()
+        depth_min = D.min().item()
+        depth_max = D.max().item()
+        depth_norm = (D - depth_min) / (depth_max - depth_min + 1e-8)
+        depth_norm = depth_norm.clamp(0, 1)
 
+        # 使用 matplotlib colormap 将深度转为 RGB
+        cmap = plt.cm.jet
+        depth_colored = cmap(depth_norm.numpy())[:, :, :3]  # (H,W,3) 范围 [0,1]
+        depth_colored = (depth_colored * 255).astype(np.uint8)
+        depth_colored = torch.from_numpy(depth_colored).permute(2,0,1)  # (3,H,W)
+
+        # 记录到 TensorBoard
+        writer.add_image(f"sample_{idx}/rgb", I, global_step=0)
+        writer.add_image(f"sample_{idx}/depth_colored", depth_colored, global_step=0)
+
+
+        # 打印信息
+        print(f"Sample {idx}:")
+        print(f"  RGB shape: {I.shape}, dtype: {I.dtype}")
+        print(f"  Depth shape: {D.shape}, dtype: {D.dtype}")
+        print(f"  Depth range: [{depth_min:.3f}, {depth_max:.3f}]")
+        print(f"  K matrix:\n{K.numpy()}\n")
+
+        # 可选：保存为图片文件
+        # torchvision.utils.save_image(I.float()/255, f"sample_{idx}_rgb.png")
+        # torchvision.utils.save_image(depth_colored.float()/255, f"sample_{idx}_depth.png")
+
+    writer.close()
+    print(f"TensorBoard logs saved to {log_dir}. Run: tensorboard --logdir {log_dir}")
 if __name__ == '__main__':
-    test()
     # create_ddad_streaming()
     # create_BlendedMVS_streaming()
+    # create_tartanair_streaming()
+    create_IRS_streaming()
+    # test()
+    # visualize_samples(log_dir="runs/TartanAir_test2")
+    # create_hypersim_streaming()
