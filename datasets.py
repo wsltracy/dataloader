@@ -31,6 +31,9 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import torch
 import OpenEXR, Imath
+import pandas as pd
+from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
 # ---------- EXR 读取函数 ----------
 def exr2hdr(exrpath):
 
@@ -110,20 +113,8 @@ def left_depth_to_right_depth(depth_left, disp_left):
                 min_depth[idx] = val
         depth_right[y, unique_xr] = min_depth
     return depth_right
-def read_npy(filename, sigma=12.0):
-    """
-    读取 TartanAir 的 npy 深度图，并进行深度范围过滤
 
-    Args:
-        filename: .npy depth file
-        sigma: 深度过滤系数
-
-    Returns:
-        depth: np.ndarray (H, W), float32
-        scale: float
-    """
-    depth = np.load(filename).astype(np.float32)
-
+def mask(depth,sigma=12.0):
     valid_depths = depth[depth > 0]
 
     if valid_depths.size > 0:
@@ -139,7 +130,52 @@ def read_npy(filename, sigma=12.0):
         ] = 0
 
     return depth
+def read_npy(filename, sigma=12.0):
+    """
+    读取 TartanAir 的 npy 深度图，并进行深度范围过滤
 
+    Args:
+        filename: .npy depth file
+        sigma: 深度过滤系数
+
+    Returns:
+        depth: np.ndarray (H, W), float32
+        scale: float
+    """
+    depth = np.load(filename).astype(np.float32)
+    depth = mask(depth,sigma)
+
+    return depth
+
+# -------------------- Hypersim 相机内参计算（解析法） --------------------
+def get_hypersim_intrinsics_from_csv(csv_path, scene_name):
+    """
+    从 metadata_camera_parameters.csv 读取场景的内参矩阵 K（OpenCV 风格）
+    使用解析公式（假设 M_cam_from_uv 第三行为 [0,0,-1]）
+    """
+    df = pd.read_csv(csv_path, index_col="scene_name")
+    row = df.loc[scene_name]
+
+    # 原始图像尺寸
+    orig_w = int(row["settings_output_img_width"])
+    orig_h = int(row["settings_output_img_height"])
+
+    # M_cam_from_uv 矩阵元素
+    a = row["M_cam_from_uv_00"]
+    b = row["M_cam_from_uv_11"]
+    tx = row["M_cam_from_uv_02"]
+    ty = row["M_cam_from_uv_12"]
+
+    # 计算内参（解析公式）
+    fx = (orig_w - 1) / (2 * a)
+    fy = (orig_h - 1) / (2 * b)   # 取绝对值后为正
+    cx = (orig_w - 1) / 2 - fx * tx
+    cy = (orig_h - 1) / 2 + fy * ty
+
+    K = np.array([[fx, 0, cx],
+                  [0, fy, cy],
+                  [0, 0, 1]], dtype=np.float32)
+    return K
 class DDADStreamingSource(torch.utils.data.Dataset):
     def __init__(self, mode, scale=256):
         super().__init__()
@@ -490,6 +526,8 @@ class IRSStreamingSource(Dataset):
             img = load_rgb(right_path)
             depth = left_depth_to_right_depth(depth_left, disp)
 
+        #mask
+        depth = mask(depth, sigma=12.0)
         # 深度裁剪与缩放
         depth = np.clip(depth, 0, 127)
         depth_uint16 = (depth * self.scale).astype(np.uint16)
@@ -505,6 +543,194 @@ class IRSStreamingSource(Dataset):
             "dep": depth_uint16,
             "kcam": self.K
         }
+
+
+# ---------- 辅助函数（仅保留深度和点云相关） ----------
+def compute_point_cloud(scene_path, cam, frame, camera_params):
+    """根据深度距离图与相机参数计算相机坐标系下的点云（单位：米）"""
+    depth_path = os.path.join(scene_path, 'images', f'{cam}_geometry_hdf5', f'frame.{frame:04d}.depth_meters.hdf5')
+    with h5py.File(depth_path, 'r') as f:
+        distance_img_meters = f['dataset'][:].astype(np.float32)
+    distance_img_meters = np.nan_to_num(distance_img_meters, nan=0.0)
+
+    width_pixels = int(camera_params["settings_output_img_width"])
+    height_pixels = int(camera_params["settings_output_img_height"])
+
+    M_cam_from_uv = np.array([
+        [camera_params["M_cam_from_uv_00"], camera_params["M_cam_from_uv_01"], camera_params["M_cam_from_uv_02"]],
+        [camera_params["M_cam_from_uv_10"], camera_params["M_cam_from_uv_11"], camera_params["M_cam_from_uv_12"]],
+        [camera_params["M_cam_from_uv_20"], camera_params["M_cam_from_uv_21"], camera_params["M_cam_from_uv_22"]]
+    ])
+
+    u_min, u_max = -1.0, 1.0
+    v_min, v_max = -1.0, 1.0
+    half_du = 0.5 * (u_max - u_min) / width_pixels
+    half_dv = 0.5 * (v_max - v_min) / height_pixels
+    u = np.linspace(u_min + half_du, u_max - half_du, width_pixels)
+    v = np.linspace(v_min + half_dv, v_max - half_dv, height_pixels)[::-1]
+    uu, vv = np.meshgrid(u, v)
+    uvs_2d = np.dstack((uu, vv, np.ones_like(uu)))
+    rays = np.dot(uvs_2d.reshape(-1, 3), M_cam_from_uv.T)
+    normed_rays = rays / np.linalg.norm(rays, axis=-1, keepdims=True)
+    points_cam = normed_rays * distance_img_meters.reshape(-1, 1)
+    points_cam *= np.array([1, -1, -1])   # 方向修正
+    points_cam = points_cam.reshape(height_pixels, width_pixels, 3)
+    return points_cam   # 相机坐标系下的点云 (x, y, z)，单位米
+
+def load_depth_old(scene_path, cam, frame):
+    """旧版深度加载（不重投影），直接从 depth_meters.hdf5 读取深度（米）"""
+    depth_path = os.path.join(scene_path, 'images', f'{cam}_geometry_hdf5', f'frame.{frame:04d}.depth_meters.hdf5')
+    with h5py.File(depth_path, 'r') as f:
+        depth = f['dataset'][:].astype(np.float32)
+    depth = np.nan_to_num(depth, nan=0.0)
+    return depth   # 单位：米
+# -------------------- Hypersim 流式数据源 --------------------
+class HypersimStreamingSource(Dataset):
+    def __init__(self, mode, root_dir, scale=256, use_tilt_shift_conversion=True):
+        """
+        Args:
+            mode: 占位参数，保持接口兼容
+            root_dir: Hypersim 原始数据根目录（应包含 downloads 子目录）
+            scale: 保留参数，不再影响深度（深度始终以米为单位）
+            use_tilt_shift_conversion: True=重投影到标准针孔；False=旧方式（不重投影）
+        """
+        self.root_dir = root_dir
+        self.image_dir = os.path.join(root_dir, "downloads")
+        self.scale = scale
+        self.use_tilt_shift_conversion = use_tilt_shift_conversion
+
+        # 加载相机参数表（用于重投影模式）
+        csv_path = os.path.join(root_dir, "metadata_camera_parameters.csv")
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"未找到相机参数文件 {csv_path}，请从 Hypersim 官方仓库下载")
+        self.camera_params_df = pd.read_csv(csv_path, index_col='scene_name')
+
+        # 收集所有有效样本
+        self.samples = []
+        scene_dirs = [d for d in os.listdir(self.image_dir)
+                      if os.path.isdir(os.path.join(self.image_dir, d)) and d.startswith('ai_')]
+        for scene in scene_dirs:
+            scene_path = os.path.join(self.image_dir, scene)
+            images_dir = os.path.join(scene_path, "images")
+            if not os.path.isdir(images_dir):
+                continue
+            preview_dirs = glob.glob(os.path.join(images_dir, "*_final_preview"))
+            for preview_dir in preview_dirs:
+                camera_name = os.path.basename(preview_dir).replace("_final_preview", "")
+                geometry_dir = os.path.join(images_dir, f"{camera_name}_geometry_hdf5")
+                if not os.path.isdir(geometry_dir):
+                    continue
+                jpg_files = glob.glob(os.path.join(preview_dir, "frame.*.jpg"))
+                for jpg_path in jpg_files:
+                    frame_id_str = os.path.basename(jpg_path).split('.')[1]
+                    frame_id = int(frame_id_str)
+                    depth_path = os.path.join(geometry_dir, f"frame.{frame_id:04d}.depth_meters.hdf5")
+                    if os.path.exists(depth_path):
+                        self.samples.append((scene_path, camera_name, frame_id))
+        print(f"Found {len(self.samples)} samples in {self.image_dir}")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        scene_path, camera_name, frame_id = self.samples[idx]
+
+        # ---------- 加载 RGB（直接从官方 JPG） ----------
+        jpg_path = os.path.join(scene_path, "images", f"{camera_name}_final_preview", f"frame.{frame_id:04d}.color.jpg")
+        rgb_pil = Image.open(jpg_path).convert('RGB')
+        rgb = np.array(rgb_pil)   # uint8, shape (H, W, 3), RGB
+
+        if self.use_tilt_shift_conversion:
+            # ---------- 重投影模式（标准针孔） ----------
+            cp = self.camera_params_df.loc[os.path.basename(scene_path)]
+            width = int(cp["settings_output_img_width"])
+            height = int(cp["settings_output_img_height"])
+
+            # 计算标准针孔内参（归一化 -> 像素单位）
+            M = np.array([
+                [cp["M_cam_from_uv_00"], cp["M_cam_from_uv_01"], cp["M_cam_from_uv_02"]],
+                [cp["M_cam_from_uv_10"], cp["M_cam_from_uv_11"], cp["M_cam_from_uv_12"]],
+                [cp["M_cam_from_uv_20"], cp["M_cam_from_uv_21"], cp["M_cam_from_uv_22"]]
+            ])
+            fx_norm = (1 / M[0, 0]) / 2
+            fy_norm = (1 / M[1, 1]) / 2
+            cx_norm = 0.5 - 0.5 * M[0, 2] / M[0, 0]
+            cy_norm = 0.5 + 0.5 * M[1, 2] / M[1, 1]
+            fx_px = fx_norm * width
+            fy_px = fy_norm * height
+            cx_px = cx_norm * width
+            cy_px = cy_norm * height
+            K = np.array([[fx_px, 0, cx_px],
+                          [0, fy_px, cy_px],
+                          [0, 0, 1]], dtype=np.float32)
+
+            # 计算相机系点云
+            points_cam = compute_point_cloud(scene_path, camera_name, frame_id, cp)
+            # 深度 = Z 坐标（米）
+            depth_meters = points_cam[:, :, 2].astype(np.float32)
+            depth_meters = np.nan_to_num(depth_meters, nan=0.0)
+
+            # 重投影到标准针孔平面
+            points_flat = points_cam.reshape(-1, 3)
+            valid = points_flat[:, 2] != 0
+            points_flat = points_flat[valid]
+            uv = points_flat[:, :2] / points_flat[:, 2:3]   # (x/z, y/z)
+            uv[:, 0] = uv[:, 0] * fx_norm + cx_norm
+            uv[:, 1] = uv[:, 1] * fy_norm + cy_norm
+            uv[:, 0] *= (width - 0.5)
+            uv[:, 1] *= (height - 0.5)
+            uv = uv.astype(np.int32)
+            uv[:, 0] = np.clip(uv[:, 0], 0, width-1)
+            uv[:, 1] = np.clip(uv[:, 1], 0, height-1)
+
+            unique_uv, indices = np.unique(uv, axis=0, return_index=True)
+            u = unique_uv[:, 0]
+            v = unique_uv[:, 1]
+
+            rgb_mapped = np.zeros((height, width, 3), dtype=np.uint8)
+            depth_mapped = np.zeros((height, width), dtype=np.float32)
+
+            orig_indices = np.flatnonzero(valid)[indices]
+            rgb_flat = rgb.reshape(-1, 3)
+            depth_flat = depth_meters.reshape(-1)
+
+            rgb_mapped[v, u] = rgb_flat[orig_indices]
+            depth_mapped[v, u] = depth_flat[orig_indices]
+
+            rgb = rgb_mapped
+            depth = depth_mapped   # 单位：米
+
+        else:
+            # ---------- 旧模式（不重投影，无几何矫正） ----------
+            # 内参固定（基于 1024x768 图像）
+            width, height = 1024, 768
+            fov_x = np.pi / 3.0
+            fov_y = fov_x * (height / width)
+            fx = (width / np.tan(fov_x/2)) / 2
+            fy = (height / np.tan(fov_y/2)) / 2
+            K = np.array([[fx, 0, width/2],
+                          [0, fy, height/2],
+                          [0, 0, 1]], dtype=np.float32)
+
+            # 深度：直接读取 depth_meters.hdf5（米）
+            depth = load_depth_old(scene_path, camera_name, frame_id)   # 单位：米
+
+        # 将 RGB 转为 JPEG 字节流（兼容原有接口）
+        rgb_pil = Image.fromarray(rgb)
+        byte_io = io.BytesIO()
+        rgb_pil.save(byte_io, format="JPEG", quality=90)
+        jpeg_bytes = byte_io.getvalue()
+        # 深度裁剪与缩放
+        depth = np.clip(depth, 0, 127)
+        depth_uint16 = (depth * self.scale).astype(np.uint16)
+        return {
+            "rgb": jpeg_bytes,
+            "dep": depth_uint16,      # float32, 单位：米
+            "kcam": K
+        }
+
+
+
 def identity_collate(batch):
     return batch
 
@@ -613,6 +839,45 @@ def create_IRS_streaming():
             for batch in tqdm(dataloader, desc=f"Writing IRS {split}"):
                 for sample in batch:
                     writer.write(sample)
+
+
+def create_hypersim_streaming():
+    """
+    将 Hypersim 数据集转换为 MDS 流式格式
+    Args:
+        root_dir: 原始数据根目录，如 '/mnt/data/Hypersim/downloads'
+        output_dir: 输出 MDS 目录，如 'datas/Hypersim_streaming/train'
+        split: 子集名称（仅用于标记）
+        scale: 深度缩放因子
+        max_frames_per_scene: 每个场景最大帧数（可选）
+    """
+    splits = ('train',)
+    for split in splits:
+        source_ds = HypersimStreamingSource(mode=split, root_dir='datas/Hypersim', scale=256, use_tilt_shift_conversion=True)
+
+        dataloader = DataLoader(
+            source_ds,
+            batch_size=1,
+            num_workers=8,
+            prefetch_factor=16,
+            collate_fn=identity_collate,
+            shuffle=True,
+        )
+
+        output_dir = f"datas/Hyper_streaming/{split}"
+        with MDSWriter(
+            out=output_dir,
+            columns={
+                "rgb": "bytes",
+                "dep": "ndarray:uint16",
+                "kcam": "ndarray:float32:3,3",
+            },
+            size_limit='128mb'
+        ) as writer:
+            for batch in tqdm(dataloader, desc=f"Writing Hyper {split}"):
+                for sample in batch:
+                    writer.write(sample)
+
 class FastStreaming(StreamingDataset):
 
     def __init__(self, transform=None, **kwargs):
@@ -628,7 +893,7 @@ class FastStreaming(StreamingDataset):
         # raw_bytes = bytearray(sample["dep"])
         # uint8_tensor = torch.frombuffer(raw_bytes, dtype=torch.uint8)
         # D = decode_png(uint8_tensor, mode=ImageReadMode.UNCHANGED)
-        # D = D.to(torch.float32) / 256.
+        D = D.to(torch.float32) / 256.
         # D = D.to(torch.float32)
         S = D.clone()
         K = torch.from_numpy(sample["kcam"])
@@ -691,10 +956,54 @@ def test():
     # for img, lab in tqdm(loader):
     #     print(img.shape)
 
+def visualize_samples(num_samples=4, log_dir="runs/IRS_test2"):
+    writer = SummaryWriter(log_dir)
+    dataset = FastStreaming(
+        local="datas/TartanAir_streaming/train",
+        shuffle=False,
+        transform=None,
+        batch_size=1,
+    )
+    for idx in range(num_samples):
+        I, S,K,D = dataset[idx]
+        # I: (C, H, W) uint8, D: (H, W) float (深度值单位: 米 / scale? 此处是原始深度值)
+        # 深度图归一化到 [0,1] 以便显示
+        D=D.squeeze(0)
+        # D=D.float()
+        depth_min = D.min().item()
+        depth_max = D.max().item()
+        depth_norm = (D - depth_min) / (depth_max - depth_min + 1e-8)
+        depth_norm = depth_norm.clamp(0, 1)
 
+        # 使用 matplotlib colormap 将深度转为 RGB
+        cmap = plt.cm.jet
+        depth_colored = cmap(depth_norm.numpy())[:, :, :3]  # (H,W,3) 范围 [0,1]
+        depth_colored = (depth_colored * 255).astype(np.uint8)
+        depth_colored = torch.from_numpy(depth_colored).permute(2,0,1)  # (3,H,W)
+
+        # 记录到 TensorBoard
+        writer.add_image(f"sample_{idx}/rgb", I, global_step=0)
+        writer.add_image(f"sample_{idx}/depth_colored", depth_colored, global_step=0)
+
+
+        # 打印信息
+        print(f"Sample {idx}:")
+        print(f"  RGB shape: {I.shape}, dtype: {I.dtype}")
+        print(f"  Depth shape: {D.shape}, dtype: {D.dtype}")
+        print(f"  Depth range: [{depth_min:.3f}, {depth_max:.3f}]")
+        print(f"  K matrix:\n{K.numpy()}\n")
+
+        # 可选：保存为图片文件
+        # torchvision.utils.save_image(I.float()/255, f"sample_{idx}_rgb.png")
+        # torchvision.utils.save_image(depth_colored.float()/255, f"sample_{idx}_depth.png")
+
+    writer.close()
+    print(f"TensorBoard logs saved to {log_dir}. Run: tensorboard --logdir {log_dir}")
 if __name__ == '__main__':
     # create_ddad_streaming()
     # create_BlendedMVS_streaming()
     # create_tartanair_streaming()
     # create_IRS_streaming()
-    test()
+    # test()
+    # visualize_samples(log_dir="runs/TartanAir_test2")
+    create_hypersim_streaming()
